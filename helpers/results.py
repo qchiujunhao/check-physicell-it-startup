@@ -71,14 +71,20 @@ def capture_failure_artifacts(
 
 def determine_failure_stage(exc: Exception) -> str:
     """Best-effort classification of which stage failed."""
-    from helpers.galaxy_client import ToolStartupFailed, ToolStartupTimeout
+    from helpers.galaxy_client import (
+        EntryPointTimeout,
+        ToolStartupFailed,
+        ToolStartupTimeout,
+    )
 
     name = type(exc).__name__
     if isinstance(exc, ToolStartupTimeout):
         return "job_timeout"
     if isinstance(exc, ToolStartupFailed):
         return "job_error"
-    if "entry_point" in str(exc).lower():
+    if isinstance(exc, EntryPointTimeout):
+        return "entry_point"
+    if "entry point" in str(exc).lower() or "entry_point" in str(exc).lower():
         return "entry_point"
     if "login" in str(exc).lower() or "auth" in str(exc).lower():
         return "authentication"

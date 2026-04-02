@@ -57,6 +57,10 @@ class ToolStartupFailed(Exception):
     pass
 
 
+class EntryPointTimeout(Exception):
+    pass
+
+
 def wait_for_tool_ready(
     gi: GalaxyInstance, job_id: str, timeout: int, poll_interval: int = 10
 ) -> None:
@@ -80,31 +84,47 @@ def wait_for_tool_ready(
     )
 
 
-def get_interactive_tool_url(gi: GalaxyInstance, job_id: str) -> str:
+def get_interactive_tool_url(
+    gi: GalaxyInstance,
+    job_id: str,
+    timeout: int = 120,
+    poll_interval: int = 5,
+) -> str:
     """Fetch the entry point URL for a running interactive tool.
 
     Uses the Galaxy API endpoint /api/entry_points which may not be
     exposed through BioBlend directly.
     """
-    # Try the entry_points API
+    deadline = time.time() + timeout
     url = f"{gi.base_url}/api/entry_points?job_id={job_id}"
-    response = gi.make_get_request(url)
-    response.raise_for_status()
-    entry_points = response.json()
+    last_issue = (
+        f"No entry points found for job {job_id}. "
+        "The tool may not be an interactive tool."
+    )
 
-    if not entry_points:
-        raise RuntimeError(
-            f"No entry points found for job {job_id}. "
-            "The tool may not be an interactive tool."
+    while time.time() < deadline:
+        response = gi.make_get_request(url)
+        response.raise_for_status()
+        entry_points = response.json()
+
+        if not entry_points:
+            last_issue = (
+                f"No entry points found for job {job_id}. "
+                "The tool may not be an interactive tool."
+            )
+            time.sleep(poll_interval)
+            continue
+
+        for entry_point in entry_points:
+            target = entry_point.get("target")
+            if target:
+                if target.startswith("http"):
+                    return target
+                return f"{gi.base_url.rstrip('/')}/{target.lstrip('/')}"
+
+        last_issue = (
+            f"Entry point for job {job_id} has no target URL yet"
         )
+        time.sleep(poll_interval)
 
-    target = entry_points[0].get("target")
-    if not target:
-        raise RuntimeError(
-            f"Entry point for job {job_id} has no target URL"
-        )
-
-    # target may be a relative path or absolute URL
-    if target.startswith("http"):
-        return target
-    return f"{gi.base_url}{target}"
+    raise EntryPointTimeout(f"{last_issue} after waiting {timeout}s")
