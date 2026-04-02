@@ -1,0 +1,42 @@
+name: PhysiCell Startup Monitor
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch: {}
+
+concurrency:
+  group: physicell-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run PhysiCell startup test
+        run: pytest tests/ -v --tb=short
+        env:
+          GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
+          GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+
+      - name: Upload results and artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monitor-results-${{ github.run_id }}
+          path: output/
+          retention-days: 30
