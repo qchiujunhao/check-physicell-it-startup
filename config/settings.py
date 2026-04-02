@@ -5,10 +5,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GALAXY_BASE_URL = os.getenv("GALAXY_BASE_URL", "https://usegalaxy.org")
-GALAXY_API_KEY = os.getenv("GALAXY_API_KEY", "")
-GALAXY_USERNAME = os.getenv("GALAXY_USERNAME", "")
-GALAXY_PASSWORD = os.getenv("GALAXY_PASSWORD", "")
+
+def env_or_default(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip() or default
+
+
+def env_or_empty(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+GALAXY_BASE_URL = env_or_default("GALAXY_BASE_URL", "https://usegalaxy.org")
+GALAXY_API_KEY = env_or_empty("GALAXY_API_KEY")
+GALAXY_USERNAME = env_or_empty("GALAXY_USERNAME")
+GALAXY_PASSWORD = env_or_empty("GALAXY_PASSWORD")
 
 PHYSICELL_TOOL_ID = os.getenv(
     "PHYSICELL_TOOL_ID",
