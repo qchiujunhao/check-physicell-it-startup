@@ -40,8 +40,29 @@ def get_or_create_history(gi: GalaxyInstance, name: str) -> str:
     return new_history["id"]
 
 
+class ToolNotAvailable(Exception):
+    pass
+
+
+def check_tool_exists(gi: GalaxyInstance, tool_id: str) -> None:
+    """Verify the tool is installed and available on this Galaxy instance."""
+    try:
+        tool = gi.tools.show_tool(tool_id)
+    except Exception as exc:
+        raise ToolNotAvailable(
+            f"Tool '{tool_id}' not found on {gi.base_url}. "
+            "It may be disabled, removed, or the tool ID is wrong."
+        ) from exc
+
+    if not tool:
+        raise ToolNotAvailable(
+            f"Tool '{tool_id}' not found on {gi.base_url}."
+        )
+
+
 def launch_physicell(gi: GalaxyInstance, history_id: str, tool_id: str) -> str:
     """Launch the PhysiCell interactive tool. Returns the job ID."""
+    check_tool_exists(gi, tool_id)
     result = gi.tools.run_tool(history_id, tool_id, tool_inputs={})
     jobs = result.get("jobs", [])
     if not jobs:
@@ -134,3 +155,22 @@ def get_interactive_tool_url(
         time.sleep(poll_interval)
 
     raise EntryPointTimeout(f"{last_issue} after waiting {timeout}s")
+
+
+def stop_interactive_tool(gi: GalaxyInstance, job_id: str) -> None:
+    """Cancel the interactive tool job to stop the running container."""
+    try:
+        gi.jobs.cancel_job(job_id)
+    except Exception:
+        # Also try the entry_points API to mark it as stopped
+        try:
+            url = f"{gi.base_url}/api/entry_points?job_id={job_id}"
+            response = gi.make_get_request(url)
+            response.raise_for_status()
+            for ep in response.json():
+                ep_id = ep.get("id")
+                if ep_id:
+                    delete_url = f"{gi.base_url}/api/entry_points/{ep_id}"
+                    gi.make_delete_request(delete_url)
+        except Exception:
+            pass

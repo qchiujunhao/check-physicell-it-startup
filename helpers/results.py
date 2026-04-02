@@ -73,23 +73,51 @@ def determine_failure_stage(exc: Exception) -> str:
     """Best-effort classification of which stage failed."""
     from helpers.galaxy_client import (
         EntryPointTimeout,
+        ToolNotAvailable,
         ToolStartupFailed,
         ToolStartupTimeout,
     )
 
-    name = type(exc).__name__
+    # Custom exception types
+    if isinstance(exc, ToolNotAvailable):
+        return "tool_not_available"
     if isinstance(exc, ToolStartupTimeout):
         return "job_timeout"
     if isinstance(exc, ToolStartupFailed):
         return "job_error"
     if isinstance(exc, EntryPointTimeout):
         return "entry_point"
-    if "entry point" in str(exc).lower() or "entry_point" in str(exc).lower():
-        return "entry_point"
-    if "login" in str(exc).lower() or "auth" in str(exc).lower():
+
+    msg = str(exc).lower()
+
+    # Connection / Galaxy down
+    if isinstance(exc, (ConnectionError, OSError)):
+        return "galaxy_unreachable"
+    if "connection" in msg or "unreachable" in msg or "resolve" in msg:
+        return "galaxy_unreachable"
+
+    # Auth issues
+    if "401" in msg or "403" in msg or "auth" in msg or "credential" in msg:
         return "authentication"
-    if "history" in str(exc).lower():
+
+    # Quota / rate limit
+    if "quota" in msg or "limit" in msg or "429" in msg:
+        return "quota_exceeded"
+
+    # Entry point
+    if "entry point" in msg or "entry_point" in msg:
+        return "entry_point"
+
+    # Tool launch
+    if "tool" in msg and ("not found" in msg or "disabled" in msg):
+        return "tool_not_available"
+
+    # History
+    if "history" in msg:
         return "history"
-    if "verify" in str(exc).lower() or "physicell" in str(exc).lower():
+
+    # UI verification
+    if "novnc" in msg or "canvas" in msg or "vnc" in msg:
         return "ui_verification"
+
     return "unknown"

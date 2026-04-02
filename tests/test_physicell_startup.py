@@ -15,6 +15,7 @@ from helpers.galaxy_client import (
     get_interactive_tool_url,
     get_or_create_history,
     launch_physicell,
+    stop_interactive_tool,
     wait_for_tool_ready,
 )
 from helpers.results import (
@@ -32,8 +33,9 @@ def seconds_remaining(deadline: float) -> int:
 @pytest.mark.timeout(STARTUP_TIMEOUT_SECONDS + 120)
 def test_physicell_startup(page: Page) -> None:
     """End-to-end test: launch PhysiCell on Galaxy and verify the UI loads."""
-    start = time.time()
-    deadline = start + STARTUP_TIMEOUT_SECONDS
+    gi = None
+    job_id = None
+    startup_start = None
 
     try:
         # Connect to Galaxy
@@ -42,8 +44,10 @@ def test_physicell_startup(page: Page) -> None:
         # Prepare a clean history
         history_id = get_or_create_history(gi, HISTORY_NAME)
 
-        # Launch the interactive tool
+        # Launch the interactive tool — start timing here
         job_id = launch_physicell(gi, history_id, PHYSICELL_TOOL_ID)
+        startup_start = time.time()
+        deadline = startup_start + STARTUP_TIMEOUT_SECONDS
 
         # Wait for the container to be running
         wait_for_tool_ready(gi, job_id, seconds_remaining(deadline))
@@ -60,18 +64,26 @@ def test_physicell_startup(page: Page) -> None:
             timeout=seconds_remaining(deadline) * 1000,
         )
 
-        elapsed = time.time() - start
-        result_path = write_result(build_result(True, elapsed))
-        print(f"\nPhysiCell started successfully in {elapsed:.1f}s")
+        startup_seconds = time.time() - startup_start
+        result_path = write_result(build_result(True, startup_seconds))
+        print(f"\nPhysiCell session available in {startup_seconds:.1f}s")
         print(f"Result written to {result_path}")
 
     except Exception as exc:
-        elapsed = time.time() - start
+        startup_seconds = time.time() - startup_start if startup_start else None
         stage = determine_failure_stage(exc)
         capture_failure_artifacts(page, stage, str(exc))
         result_path = write_result(
-            build_result(False, elapsed, stage, str(exc))
+            build_result(False, startup_seconds, stage, str(exc))
         )
-        print(f"\nPhysiCell startup failed at stage '{stage}' after {elapsed:.1f}s")
+        print(f"\nPhysiCell startup failed at stage '{stage}'"
+              f"{f' after {startup_seconds:.1f}s' if startup_seconds else ''}")
         print(f"Result written to {result_path}")
         raise
+
+    finally:
+        # Always stop the interactive tool to free the container
+        if gi and job_id:
+            print("\nStopping interactive tool session...")
+            stop_interactive_tool(gi, job_id)
+            print("Interactive tool session stopped.")

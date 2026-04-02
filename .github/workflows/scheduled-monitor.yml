@@ -33,6 +33,10 @@ jobs:
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
 
+      - name: Write job summary
+        if: always()
+        run: python scripts/write_summary.py >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload results and artifacts
         uses: actions/upload-artifact@v4
         if: always()
