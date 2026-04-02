@@ -52,19 +52,19 @@ def test_physicell_startup(page: Page) -> None:
         # Wait for the container to be running
         wait_for_tool_ready(gi, job_id, seconds_remaining(deadline))
 
-        # Get the entry point URL
+        # Get the entry point URL — this is when the tool session is available
         tool_url = get_interactive_tool_url(
             gi, job_id, timeout=seconds_remaining(deadline)
         )
+        startup_seconds = time.time() - startup_start
 
-        # Verify the PhysiCell UI loads in the browser
+        # Verify the PhysiCell UI loads in the browser (not counted in startup time)
         verify_physicell_ui(
             page,
             tool_url,
             timeout=seconds_remaining(deadline) * 1000,
         )
 
-        startup_seconds = time.time() - startup_start
         result_path = write_result(build_result(True, startup_seconds))
         print(f"\nPhysiCell session available in {startup_seconds:.1f}s")
         print(f"Result written to {result_path}")

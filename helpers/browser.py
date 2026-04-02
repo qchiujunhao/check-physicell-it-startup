@@ -1,3 +1,5 @@
+import time
+
 from playwright.sync_api import Page
 
 
@@ -5,10 +7,8 @@ def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 60_000) -> Non
     """Navigate to the interactive tool URL and verify PhysiCell Studio loads.
 
     PhysiCell Studio is a PyQt desktop app served via noVNC (port 5800).
-    The browser shows a noVNC client that connects to the VNC session.
-    Since noVNC renders to a <canvas>, we verify:
-      1. The noVNC page loaded (canvas element exists)
-      2. The VNC connection is established (connected status)
+    Since noVNC renders to a <canvas>, we verify that the canvas exists
+    and the VNC session has connected and rendered content.
 
     Args:
         page: Playwright page instance.
@@ -19,27 +19,20 @@ def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 60_000) -> Non
         AssertionError: If noVNC does not connect or canvas is missing.
     """
     page.goto(tool_url, wait_until="domcontentloaded", timeout=timeout)
-    page.wait_for_load_state("networkidle", timeout=timeout)
 
-    # noVNC uses a <canvas> element for rendering the remote desktop
+    # Wait for a canvas element — this is the noVNC rendering surface
     canvas = page.locator("canvas").first
     canvas.wait_for(state="visible", timeout=timeout)
 
-    # Wait for noVNC to establish the VNC connection.
-    # noVNC typically shows connection status in a bar or sets body/container
-    # classes. The exact indicators depend on the noVNC version:
-    #   - Modern noVNC: #noVNC_status shows "Connected"
-    #   - Or: body gains class "noVNC_connected"
-    #   - Or: the status bar disappears when connected
-    # We try multiple strategies.
-    connected = _wait_for_vnc_connected(page, timeout)
+    # Poll for VNC connected state with short intervals
+    connected = _wait_for_vnc_connected(page, timeout_ms=timeout)
 
     assert connected, (
         f"noVNC canvas found at {tool_url} but VNC connection was not confirmed. "
         "The desktop app may not have started inside the container."
     )
 
-    # Take a verification screenshot (always, for the result record)
+    # Take a verification screenshot for the result record
     try:
         from helpers.results import get_run_dir
         run_dir = get_run_dir()
@@ -48,65 +41,58 @@ def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 60_000) -> Non
         pass
 
 
-def _wait_for_vnc_connected(page: Page, timeout: int) -> bool:
-    """Try multiple strategies to detect noVNC connected state."""
-    half_timeout = timeout // 2
+def _wait_for_vnc_connected(page: Page, timeout_ms: int) -> bool:
+    """Poll multiple indicators to detect noVNC connected state.
 
-    # Strategy 1: Look for noVNC_connected class on body or container
-    try:
-        page.wait_for_selector(
-            ".noVNC_connected, body.noVNC_connected, #noVNC_container.noVNC_connected",
-            state="attached",
-            timeout=half_timeout,
-        )
-        return True
-    except Exception:
-        pass
+    Instead of trying strategies sequentially with large timeouts,
+    check all indicators in a tight loop every 2 seconds.
+    """
+    deadline = time.time() + (timeout_ms / 1000)
 
-    # Strategy 2: Look for status text "Connected"
-    try:
-        status = page.locator("#noVNC_status, #noVNC_status_bar, [id*='status']")
-        if status.count() > 0:
-            text = status.first.inner_text()
-            if "connected" in text.lower():
+    while time.time() < deadline:
+        # Check 1: noVNC_connected CSS class
+        try:
+            el = page.query_selector(
+                ".noVNC_connected, body.noVNC_connected, "
+                "#noVNC_container.noVNC_connected"
+            )
+            if el:
                 return True
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # Strategy 3: Check that the canvas has non-zero dimensions
-    # (indicates something is being rendered)
-    try:
-        canvas = page.locator("canvas").first
-        box = canvas.bounding_box()
-        if box and box["width"] > 100 and box["height"] > 100:
-            return True
-    except Exception:
-        pass
+        # Check 2: Status text contains "Connected"
+        try:
+            for sel in ("#noVNC_status", "#noVNC_status_bar", "[id*='status']"):
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    text = loc.first.inner_text()
+                    if "connected" in text.lower():
+                        return True
+        except Exception:
+            pass
 
-    # Strategy 4: Wait a bit and check canvas pixel data via JS
-    # A blank/black canvas means VNC hasn't rendered yet
-    try:
-        page.wait_for_timeout(5000)
-        has_content = page.evaluate("""() => {
-            const canvas = document.querySelector('canvas');
-            if (!canvas) return false;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return false;
-            const w = Math.min(canvas.width, 100);
-            const h = Math.min(canvas.height, 100);
-            const data = ctx.getImageData(10, 10, w, h).data;
-            // Check if there are non-black, non-transparent pixels
-            let nonBlank = 0;
-            for (let i = 0; i < data.length; i += 4) {
-                if (data[i] > 10 || data[i+1] > 10 || data[i+2] > 10) {
-                    nonBlank++;
+        # Check 3: Canvas has non-trivial pixel content
+        try:
+            has_content = page.evaluate("""() => {
+                const canvas = document.querySelector('canvas');
+                if (!canvas || canvas.width < 100 || canvas.height < 100)
+                    return false;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return false;
+                const data = ctx.getImageData(10, 10, 80, 80).data;
+                let nonBlank = 0;
+                for (let i = 0; i < data.length; i += 4) {
+                    if (data[i] > 10 || data[i+1] > 10 || data[i+2] > 10)
+                        nonBlank++;
                 }
-            }
-            return nonBlank > 50;
-        }""")
-        if has_content:
-            return True
-    except Exception:
-        pass
+                return nonBlank > 50;
+            }""")
+            if has_content:
+                return True
+        except Exception:
+            pass
+
+        page.wait_for_timeout(2000)
 
     return False
