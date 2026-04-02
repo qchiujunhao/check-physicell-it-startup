@@ -1,3 +1,4 @@
+import math
 import time
 
 import pytest
@@ -24,10 +25,15 @@ from helpers.results import (
 )
 
 
+def seconds_remaining(deadline: float) -> int:
+    return max(1, math.ceil(deadline - time.time()))
+
+
 @pytest.mark.timeout(STARTUP_TIMEOUT_SECONDS + 120)
 def test_physicell_startup(page: Page) -> None:
     """End-to-end test: launch PhysiCell on Galaxy and verify the UI loads."""
     start = time.time()
+    deadline = start + STARTUP_TIMEOUT_SECONDS
 
     try:
         # Connect to Galaxy
@@ -40,13 +46,19 @@ def test_physicell_startup(page: Page) -> None:
         job_id = launch_physicell(gi, history_id, PHYSICELL_TOOL_ID)
 
         # Wait for the container to be running
-        wait_for_tool_ready(gi, job_id, STARTUP_TIMEOUT_SECONDS)
+        wait_for_tool_ready(gi, job_id, seconds_remaining(deadline))
 
         # Get the entry point URL
-        tool_url = get_interactive_tool_url(gi, job_id)
+        tool_url = get_interactive_tool_url(
+            gi, job_id, timeout=seconds_remaining(deadline)
+        )
 
         # Verify the PhysiCell UI loads in the browser
-        verify_physicell_ui(page, tool_url)
+        verify_physicell_ui(
+            page,
+            tool_url,
+            timeout=seconds_remaining(deadline) * 1000,
+        )
 
         elapsed = time.time() - start
         result_path = write_result(build_result(True, elapsed))

@@ -122,8 +122,14 @@ def get_interactive_tool_url(
                     return target
                 return f"{gi.base_url.rstrip('/')}/{target.lstrip('/')}"
 
+        entry_point = entry_points[0]
+        details = []
+        for key in ("id", "active", "deleted", "configured", "host", "port"):
+            if key in entry_point:
+                details.append(f"{key}={entry_point[key]}")
+        detail_text = f" ({', '.join(details)})" if details else ""
         last_issue = (
-            f"Entry point for job {job_id} has no target URL yet"
+            f"Entry point for job {job_id} has no target URL yet{detail_text}"
         )
         time.sleep(poll_interval)
 

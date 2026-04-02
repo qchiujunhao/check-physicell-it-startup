@@ -41,7 +41,7 @@ cp .env.example .env
 | `GALAXY_USERNAME` | Yes* | — | Galaxy username (alternative to API key) |
 | `GALAXY_PASSWORD` | Yes* | — | Galaxy password (alternative to API key) |
 | `PHYSICELL_TOOL_ID` | No | `toolshed.g2.bx.psu.edu/repos/rheiland/physicell_studio/interactive_tool_pcstudio/0.7` | Galaxy tool ID |
-| `STARTUP_TIMEOUT_SECONDS` | No | `600` | Max seconds to wait for tool startup |
+| `STARTUP_TIMEOUT_SECONDS` | No | `600` | Max seconds allowed for the full startup check (job, entry point, and UI) |
 | `HISTORY_NAME` | No | `PhysiCell Monitor` | Galaxy history name to use |
 | `OUTPUT_DIR` | No | `output` | Directory for result files |
 
