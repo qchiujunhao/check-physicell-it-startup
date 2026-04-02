@@ -28,5 +28,6 @@ PHYSICELL_TOOL_ID = os.getenv(
 )
 
 STARTUP_TIMEOUT_SECONDS = int(os.getenv("STARTUP_TIMEOUT_SECONDS", "600"))
+STARTUP_EXPECTED_SECONDS = int(os.getenv("STARTUP_EXPECTED_SECONDS", "120"))
 HISTORY_NAME = os.getenv("HISTORY_NAME", "PhysiCell Monitor")
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "output"))

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
-from config.settings import GALAXY_BASE_URL, OUTPUT_DIR
+from config.settings import GALAXY_BASE_URL, OUTPUT_DIR, STARTUP_EXPECTED_SECONDS
 
 
 def build_result(
@@ -13,11 +13,21 @@ def build_result(
     failure_stage: str | None = None,
     failure_message: str | None = None,
 ) -> dict:
+    # Determine status: "ok", "slow", or "fail"
+    if not success:
+        status = "fail"
+    elif startup_seconds is not None and startup_seconds > STARTUP_EXPECTED_SECONDS:
+        status = "slow"
+    else:
+        status = "ok"
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "environment": GALAXY_BASE_URL,
+        "status": status,
         "success": success,
         "startup_seconds": round(startup_seconds, 2) if startup_seconds is not None else None,
+        "expected_seconds": STARTUP_EXPECTED_SECONDS,
         "failure_stage": failure_stage,
         "failure_message": failure_message,
     }

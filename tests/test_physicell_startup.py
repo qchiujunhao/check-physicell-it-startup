@@ -7,6 +7,7 @@ from playwright.sync_api import Page
 from config.settings import (
     HISTORY_NAME,
     PHYSICELL_TOOL_ID,
+    STARTUP_EXPECTED_SECONDS,
     STARTUP_TIMEOUT_SECONDS,
 )
 from helpers.browser import verify_physicell_ui
@@ -80,9 +81,16 @@ def test_physicell_startup(page: Page) -> None:
         )
         print(f"[timing] Browser verification: {time.time() - t0:.1f}s")
 
-        result_path = write_result(build_result(True, startup_seconds))
+        result = build_result(True, startup_seconds)
+        result_path = write_result(result)
         print(f"\nPhysiCell session available in {startup_seconds:.1f}s")
         print(f"Result written to {result_path}")
+
+        if result["status"] == "slow":
+            pytest.fail(
+                f"Tool started but took {startup_seconds:.1f}s "
+                f"(expected < {STARTUP_EXPECTED_SECONDS}s)"
+            )
 
     except Exception as exc:
         startup_seconds = time.time() - startup_start if startup_start else None
