@@ -83,7 +83,7 @@ class EntryPointTimeout(Exception):
 
 
 def wait_for_tool_ready(
-    gi: GalaxyInstance, job_id: str, timeout: int, poll_interval: int = 10
+    gi: GalaxyInstance, job_id: str, timeout: int, poll_interval: int = 3
 ) -> None:
     """Poll job state until running. Raises on timeout or error."""
     deadline = time.time() + timeout
@@ -109,7 +109,7 @@ def get_interactive_tool_url(
     gi: GalaxyInstance,
     job_id: str,
     timeout: int = 120,
-    poll_interval: int = 5,
+    poll_interval: int = 2,
 ) -> str:
     """Fetch the entry point URL for a running interactive tool.
 

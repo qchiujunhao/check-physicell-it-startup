@@ -39,31 +39,46 @@ def test_physicell_startup(page: Page) -> None:
 
     try:
         # Connect to Galaxy
+        t0 = time.time()
         gi = get_galaxy_instance()
+        print(f"\n[timing] Galaxy connection: {time.time() - t0:.1f}s")
 
         # Prepare a clean history
+        t0 = time.time()
         history_id = get_or_create_history(gi, HISTORY_NAME)
+        print(f"[timing] History setup: {time.time() - t0:.1f}s")
 
-        # Launch the interactive tool — start timing here
+        # Launch the interactive tool — start startup timer here
+        t0 = time.time()
         job_id = launch_physicell(gi, history_id, PHYSICELL_TOOL_ID)
+        print(f"[timing] Tool launch API call: {time.time() - t0:.1f}s")
+
         startup_start = time.time()
         deadline = startup_start + STARTUP_TIMEOUT_SECONDS
 
         # Wait for the container to be running
+        t0 = time.time()
         wait_for_tool_ready(gi, job_id, seconds_remaining(deadline))
+        print(f"[timing] Job queued → running: {time.time() - t0:.1f}s")
 
         # Get the entry point URL — this is when the tool session is available
+        t0 = time.time()
         tool_url = get_interactive_tool_url(
             gi, job_id, timeout=seconds_remaining(deadline)
         )
+        print(f"[timing] Entry point available: {time.time() - t0:.1f}s")
+
         startup_seconds = time.time() - startup_start
+        print(f"[timing] Total startup (running + entry point): {startup_seconds:.1f}s")
 
         # Verify the PhysiCell UI loads in the browser (not counted in startup time)
+        t0 = time.time()
         verify_physicell_ui(
             page,
             tool_url,
             timeout=seconds_remaining(deadline) * 1000,
         )
+        print(f"[timing] Browser verification: {time.time() - t0:.1f}s")
 
         result_path = write_result(build_result(True, startup_seconds))
         print(f"\nPhysiCell session available in {startup_seconds:.1f}s")
