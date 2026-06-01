@@ -2,7 +2,7 @@ name: PhysiCell Startup Monitor
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # every 6 hours
+    - cron: '17 */6 * * *'  # every 6 hours, away from top-of-hour load
   workflow_dispatch: {}
 
 concurrency:
@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: '.python-version'
 
       - name: Install dependencies
         run: pip install -e .
@@ -27,15 +27,43 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
 
-      - name: Run PhysiCell startup test
-        run: pytest tests/ -v --tb=short
+      - name: Restore monitor alert state
+        uses: actions/cache/restore@v4
+        with:
+          path: .monitor-state
+          key: physicell-monitor-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            physicell-monitor-state-
+
+      - name: Run PhysiCell startup monitor
+        run: check-physicell-startup
         env:
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+          PHYSICELL_TOOL_VERSION_POLICY: ${{ vars.PHYSICELL_TOOL_VERSION_POLICY }}
 
       - name: Write job summary
         if: always()
         run: python scripts/write_summary.py >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Evaluate alert
+        if: always()
+        run: python scripts/evaluate_alert.py
+        env:
+          MONITOR_ALERT_STATE_FILE: .monitor-state/alert-state.json
+          MONITOR_ALERT_WEBHOOK_URL: ${{ secrets.MONITOR_ALERT_WEBHOOK_URL }}
+          ALERT_FAILURE_THRESHOLD: ${{ vars.ALERT_FAILURE_THRESHOLD }}
+          ALERT_IMMEDIATE_STAGES: ${{ vars.ALERT_IMMEDIATE_STAGES }}
+          ALERT_COUNT_STATUSES: ${{ vars.ALERT_COUNT_STATUSES }}
+          ALERT_REPEAT_EVERY: ${{ vars.ALERT_REPEAT_EVERY }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Save monitor alert state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .monitor-state
+          key: physicell-monitor-state-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload results and artifacts
         uses: actions/upload-artifact@v4

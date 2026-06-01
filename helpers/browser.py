@@ -3,6 +3,10 @@ import time
 from playwright.sync_api import Page
 
 
+class InteractiveToolProxyError(RuntimeError):
+    """Raised when Galaxy serves an interactive-tool proxy error page."""
+
+
 def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 30_000) -> None:
     """Navigate to the interactive tool URL and check if something loads.
 
@@ -23,6 +27,10 @@ def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 30_000) -> Non
     deadline = time.time() + (timeout / 1000)
 
     while time.time() < deadline:
+        proxy_error = _interactive_tool_proxy_error(page)
+        if proxy_error:
+            raise InteractiveToolProxyError(proxy_error)
+
         # Check for any meaningful page content
         if _page_has_content(page):
             return
@@ -30,9 +38,27 @@ def verify_physicell_ui(page: Page, tool_url: str, timeout: int = 30_000) -> Non
         page.wait_for_timeout(2000)
 
     raise RuntimeError(
-        f"Page at {tool_url} loaded but no meaningful content detected "
+        "Interactive tool page loaded but no meaningful content was detected "
         f"within {timeout / 1000:.0f}s"
     )
+
+
+def _interactive_tool_proxy_error(page: Page) -> str | None:
+    """Return a known Galaxy interactive-tool proxy error, when visible."""
+    try:
+        body_text = page.evaluate("() => document.body?.innerText?.trim() || ''")
+    except Exception:
+        return None
+
+    lowered = body_text.lower()
+    if "proxy target missing" in lowered:
+        return "Interactive tool proxy target missing"
+    if "bad gateway" in lowered:
+        return "Interactive tool proxy returned a bad gateway page"
+    if "service unavailable" in lowered:
+        return "Interactive tool proxy returned a service unavailable page"
+
+    return None
 
 
 def _page_has_content(page: Page) -> bool:
