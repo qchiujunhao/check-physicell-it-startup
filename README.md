@@ -125,6 +125,7 @@ production checks.
 | `GALAXY_LOGIN_TIMEOUT_SECONDS` | No | `30` | Max seconds to establish the browser login session. |
 | `PURGE_REUSED_HISTORY` | No | `false` | Whether to purge datasets in an existing monitor history before launch. Disabled by default to avoid deleting data unexpectedly. |
 | `HISTORY_NAME` | No | `PhysiCell Monitor` | Galaxy history name used for monitor runs. |
+| `CLEANUP_MIN_AGE_MINUTES` | No | `60` | Scheduled cleanup only cancels jobs older than this, so it never kills an in-flight monitor run. |
 | `OUTPUT_DIR` | No | `output` | Directory where result files and artifacts are written. |
 
 \* Provide `GALAXY_API_KEY`, or `GALAXY_USERNAME` and `GALAXY_PASSWORD`, to
@@ -151,6 +152,18 @@ The scheduled workflow runs at minute 17 instead of exactly on the hour to avoid
 the busiest GitHub Actions scheduling window. It also restores and saves
 `.monitor-state/alert-state.json` through the GitHub Actions cache so alerts can
 be based on consecutive runs rather than a single failure.
+
+### Scheduled cleanup
+
+Each run stops its own interactive-tool job in a `finally` block, but a hard
+crash before that point can leave a running container behind or let datasets
+accumulate in the monitor history. `.github/workflows/cleanup.yml` runs
+`scripts/cleanup.py` daily at 03:30 UTC (and on manual dispatch) to sweep up
+those leaks. It is scoped strictly to `HISTORY_NAME`, so it never touches other
+histories, and it only cancels jobs older than `CLEANUP_MIN_AGE_MINUTES`
+(default 60), so it cannot kill a monitor run that is still in flight. The
+cleanup needs only `GALAXY_BASE_URL` and `GALAXY_API_KEY`. Run it locally with
+`python scripts/cleanup.py`.
 
 ### Slack notifications
 

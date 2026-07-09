@@ -83,3 +83,7 @@ GALAXY_LOGIN_TIMEOUT_SECONDS = env_int("GALAXY_LOGIN_TIMEOUT_SECONDS", 30, minim
 PURGE_REUSED_HISTORY = env_bool("PURGE_REUSED_HISTORY", False)
 HISTORY_NAME = env_or_default("HISTORY_NAME", "PhysiCell Monitor")
 OUTPUT_DIR = Path(env_or_default("OUTPUT_DIR", "output"))
+
+# Scheduled cleanup only cancels jobs older than this, so it never kills a
+# monitor run that is still in flight.
+CLEANUP_MIN_AGE_MINUTES = env_int("CLEANUP_MIN_AGE_MINUTES", 60, minimum=0)
