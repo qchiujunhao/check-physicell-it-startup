@@ -1,0 +1,32 @@
+name: PhysiCell Monitor Cleanup
+
+on:
+  schedule:
+    - cron: '30 3 * * *'  # daily at 03:30 UTC, away from the monitor's :17 runs
+  workflow_dispatch: {}
+
+concurrency:
+  group: physicell-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Run cleanup
+        run: python scripts/cleanup.py
+        env:
+          GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
+          GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+          CLEANUP_MIN_AGE_MINUTES: ${{ vars.CLEANUP_MIN_AGE_MINUTES }}

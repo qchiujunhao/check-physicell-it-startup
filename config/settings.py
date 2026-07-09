@@ -78,6 +78,12 @@ GALAXY_STATUSPAGE_SUMMARY_URL = env_or_default(
 STARTUP_TIMEOUT_SECONDS = env_int("STARTUP_TIMEOUT_SECONDS", 600, minimum=1)
 STARTUP_EXPECTED_SECONDS = env_int("STARTUP_EXPECTED_SECONDS", 120, minimum=1)
 REQUIRE_UI_VERIFICATION = env_bool("REQUIRE_UI_VERIFICATION", True)
+UI_VERIFY_TIMEOUT_SECONDS = env_int("UI_VERIFY_TIMEOUT_SECONDS", 60, minimum=1)
+GALAXY_LOGIN_TIMEOUT_SECONDS = env_int("GALAXY_LOGIN_TIMEOUT_SECONDS", 30, minimum=1)
 PURGE_REUSED_HISTORY = env_bool("PURGE_REUSED_HISTORY", False)
 HISTORY_NAME = env_or_default("HISTORY_NAME", "PhysiCell Monitor")
 OUTPUT_DIR = Path(env_or_default("OUTPUT_DIR", "output"))
+
+# Scheduled cleanup only cancels jobs older than this, so it never kills a
+# monitor run that is still in flight.
+CLEANUP_MIN_AGE_MINUTES = env_int("CLEANUP_MIN_AGE_MINUTES", 60, minimum=0)

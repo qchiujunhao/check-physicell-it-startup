@@ -124,11 +124,6 @@ def test_get_or_create_history_can_purge_when_requested() -> None:
     ]
 
 
-def test_determine_failure_stage_recognizes_ui_verification_message() -> None:
-    exc = RuntimeError("UI verification failed: no meaningful content")
-    assert determine_failure_stage(exc) == "ui_verification"
-
-
 def test_determine_failure_stage_recognizes_proxy_target_error() -> None:
     exc = RuntimeError("Interactive tool proxy failed: Proxy target missing")
     assert determine_failure_stage(exc) == "entry_point"

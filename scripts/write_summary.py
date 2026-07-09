@@ -15,10 +15,10 @@ def find_latest_result() -> dict | None:
 
 
 def find_screenshot(success: bool) -> Path | None:
-    """Find the most recent screenshot."""
+    """Find the most recent screenshot for the latest run."""
     dirs = sorted(OUTPUT_DIR.glob("*/"), reverse=True)
     for d in dirs:
-        names = ["connected.png", "session.png"] if success else ["failure.png"]
+        names = ["connected.png"] if success else ["failure.png"]
         for name in names:
             path = d / name
             if path.exists():

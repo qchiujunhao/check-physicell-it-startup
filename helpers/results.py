@@ -2,8 +2,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from playwright.sync_api import Page
-
 from config.settings import GALAXY_BASE_URL, OUTPUT_DIR, STARTUP_EXPECTED_SECONDS
 
 
@@ -85,29 +83,8 @@ def write_result(result: dict) -> Path:
     return path
 
 
-def capture_success_artifacts(page: Page | None) -> Path:
-    """Save artifacts from a successful monitor run."""
-    run_dir = get_run_dir()
-
-    if page is not None:
-        try:
-            page.screenshot(
-                path=str(run_dir / "connected.png"),
-                full_page=True,
-                timeout=10_000,
-            )
-        except Exception:
-            pass
-
-    return run_dir
-
-
-def capture_failure_artifacts(
-    page: Page | None,
-    stage: str,
-    message: str,
-) -> Path:
-    """Save screenshot and page HTML on failure. Returns the run directory."""
+def capture_failure_artifacts(stage: str, message: str) -> Path:
+    """Save failure stage metadata. Returns the run directory."""
     run_dir = get_run_dir()
     metadata = {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -115,33 +92,19 @@ def capture_failure_artifacts(
         "message": message,
     }
     (run_dir / "failure.json").write_text(json.dumps(metadata, indent=2))
-
-    if page is not None:
-        try:
-            page.screenshot(
-                path=str(run_dir / "failure.png"),
-                full_page=True,
-                timeout=10_000,
-            )
-        except Exception:
-            pass
-        try:
-            html = page.content()
-            (run_dir / "page.html").write_text(html)
-        except Exception:
-            pass
-
     return run_dir
 
 
 def determine_failure_stage(exc: Exception) -> str:
     """Best-effort classification of which stage failed."""
+    from helpers.entry_point import InteractiveToolProxyError
     from helpers.galaxy_client import (
         EntryPointTimeout,
         ToolNotAvailable,
         ToolStartupFailed,
         ToolStartupTimeout,
     )
+    from helpers.ui_check import GalaxyLoginError, ToolUINotReady
 
     # Custom exception types
     if isinstance(exc, ToolNotAvailable):
@@ -150,8 +113,12 @@ def determine_failure_stage(exc: Exception) -> str:
         return "job_timeout"
     if isinstance(exc, ToolStartupFailed):
         return "job_error"
-    if isinstance(exc, EntryPointTimeout):
+    if isinstance(exc, (EntryPointTimeout, InteractiveToolProxyError)):
         return "entry_point"
+    if isinstance(exc, GalaxyLoginError):
+        return "authentication"
+    if isinstance(exc, ToolUINotReady):
+        return "ui_verification"
 
     msg = str(exc).lower()
 
@@ -162,7 +129,13 @@ def determine_failure_stage(exc: Exception) -> str:
         return "galaxy_unreachable"
 
     # Auth issues
-    if "401" in msg or "403" in msg or "auth" in msg or "credential" in msg:
+    if (
+        "401" in msg
+        or "403" in msg
+        or "auth" in msg
+        or "credential" in msg
+        or "login" in msg
+    ):
         return "authentication"
 
     # Quota / rate limit
@@ -187,14 +160,7 @@ def determine_failure_stage(exc: Exception) -> str:
         return "history"
 
     # UI verification
-    if (
-        "ui verification" in msg
-        or "meaningful content" in msg
-        or "browser" in msg
-        or "novnc" in msg
-        or "canvas" in msg
-        or "vnc" in msg
-    ):
+    if "ui verification" in msg or "did not render" in msg or "canvas" in msg:
         return "ui_verification"
 
     return "unknown"

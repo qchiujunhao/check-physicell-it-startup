@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
-      - name: Install Playwright browsers
+      - name: Install Playwright browser
         run: playwright install chromium --with-deps
 
       - name: Restore monitor alert state
@@ -40,11 +40,22 @@ jobs:
         env:
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+          GALAXY_USERNAME: ${{ secrets.GALAXY_USERNAME }}
+          GALAXY_PASSWORD: ${{ secrets.GALAXY_PASSWORD }}
           PHYSICELL_TOOL_VERSION_POLICY: ${{ vars.PHYSICELL_TOOL_VERSION_POLICY }}
 
       - name: Write job summary
         if: always()
         run: python scripts/write_summary.py >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack
+        if: always()
+        run: python scripts/notify_slack.py
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Evaluate alert
         if: always()
