@@ -24,11 +24,11 @@ def test_blank_integer_uses_default(monkeypatch) -> None:
 
 
 def test_boolean_setting_parses_common_values(monkeypatch) -> None:
-    monkeypatch.setenv("REQUIRE_UI_VERIFICATION", "yes")
-    assert settings.env_bool("REQUIRE_UI_VERIFICATION", False) is True
+    monkeypatch.setenv("PURGE_REUSED_HISTORY", "yes")
+    assert settings.env_bool("PURGE_REUSED_HISTORY", False) is True
 
-    monkeypatch.setenv("REQUIRE_UI_VERIFICATION", "off")
-    assert settings.env_bool("REQUIRE_UI_VERIFICATION", True) is False
+    monkeypatch.setenv("PURGE_REUSED_HISTORY", "off")
+    assert settings.env_bool("PURGE_REUSED_HISTORY", True) is False
 
 
 def test_choice_setting_parses_known_values(monkeypatch) -> None:

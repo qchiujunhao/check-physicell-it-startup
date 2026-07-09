@@ -24,9 +24,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
-
       - name: Restore monitor alert state
         uses: actions/cache/restore@v4
         with:

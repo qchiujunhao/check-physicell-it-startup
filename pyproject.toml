@@ -9,19 +9,16 @@ description = "Monitor PhysiCell interactive tool startup on Galaxy"
 requires-python = ">=3.11"
 dependencies = [
     "bioblend>=1.2.0",
-    "playwright>=1.40.0",
     "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=8.0.0",
-    "pytest-playwright>=0.5.0",
     "pytest-timeout>=2.3.0",
 ]
 dev = [
     "pytest>=8.0.0",
-    "pytest-playwright>=0.5.0",
     "pytest-timeout>=2.3.0",
     "ruff>=0.8.0",
 ]
@@ -31,7 +28,7 @@ check-physicell-startup = "helpers.monitor:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not integration' --strict-markers --browser chromium --screenshot only-on-failure --tracing retain-on-failure"
+addopts = "-m 'not integration' --strict-markers"
 markers = [
     "integration: live Galaxy monitor checks that require credentials and network access",
 ]

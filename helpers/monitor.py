@@ -3,8 +3,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
-
 from config.settings import (
     GALAXY_BASE_URL,
     GALAXY_STATUSPAGE_SUMMARY_URL,
@@ -14,11 +12,10 @@ from config.settings import (
     PREFLIGHT_ENABLED,
     PREFLIGHT_TIMEOUT_SECONDS,
     PURGE_REUSED_HISTORY,
-    REQUIRE_UI_VERIFICATION,
     STARTUP_EXPECTED_SECONDS,
     STARTUP_TIMEOUT_SECONDS,
 )
-from helpers.browser import InteractiveToolProxyError, verify_physicell_ui
+from helpers.entry_point import InteractiveToolProxyError, verify_entry_point
 from helpers.galaxy_client import (
     get_galaxy_instance,
     get_interactive_tool_url,
@@ -31,13 +28,8 @@ from helpers.galaxy_client import (
 from helpers.results import (
     build_result,
     capture_failure_artifacts,
-    capture_success_artifacts,
     write_result,
 )
-
-
-class SlowStartup(Exception):
-    pass
 
 
 def seconds_remaining(deadline: float) -> int:
@@ -68,7 +60,6 @@ def _redact_message(message: str, sensitive_values: list[str]) -> str:
 
 
 def run_physicell_monitor(
-    page: Page,
     log: Callable[[str], None] = print,
 ) -> Path:
     """Run the end-to-end PhysiCell startup monitor and write result artifacts."""
@@ -155,42 +146,26 @@ def run_physicell_monitor(
         startup_seconds = time.time() - startup_start
         log(f"[timing] startup total: {startup_seconds:.1f}s")
 
-        ui_verified = True
-        ui_error = None
         try:
             _time_stage(
-                "browser_verification",
+                "entry_point_verification",
                 timings,
                 log,
-                lambda: verify_physicell_ui(page, tool_url, timeout=30_000),
+                lambda: verify_entry_point(tool_url, timeout=30),
             )
-        except Exception as exc:
-            ui_verified = False
-            ui_error = _redact_message(str(exc), [tool_url])
-            timings.setdefault("browser_verification", 30.0)
-            log(f"[timing] browser verification failed: {ui_error}")
-            if isinstance(exc, InteractiveToolProxyError):
-                raise RuntimeError(
-                    f"Interactive tool proxy failed: {ui_error}"
-                ) from exc
-            if REQUIRE_UI_VERIFICATION:
-                raise RuntimeError(f"UI verification failed: {ui_error}") from exc
-
-        capture_success_artifacts(page)
+        except InteractiveToolProxyError as exc:
+            message = _redact_message(str(exc), [tool_url])
+            raise RuntimeError(message) from exc
 
         result = build_result(
             True,
             startup_seconds,
             timings=timings,
-            ui_verified=ui_verified,
-            ui_required=REQUIRE_UI_VERIFICATION,
             preflight=preflight,
             configured_tool_id=PHYSICELL_TOOL_ID,
             tool_id=selected_tool_id,
             tool_version_policy=PHYSICELL_TOOL_VERSION_POLICY,
         )
-        if ui_error:
-            result["ui_error"] = ui_error
 
         result_path = write_result(result)
         log("")
@@ -198,24 +173,20 @@ def run_physicell_monitor(
         log(f"Result written to {result_path}")
 
         if result["status"] == "slow":
-            message = (
+            log(
                 f"Tool started but took {startup_seconds:.1f}s "
-                f"(expected < {STARTUP_EXPECTED_SECONDS}s)"
+                f"(expected < {STARTUP_EXPECTED_SECONDS}s); "
+                "reported as slow but not treated as a failure."
             )
-            log(message)
-            raise SlowStartup(message)
 
         return result_path
-
-    except SlowStartup:
-        raise
 
     except Exception as exc:
         startup_seconds = time.time() - startup_start if startup_start else None
         from helpers.results import determine_failure_stage
 
         stage = determine_failure_stage(exc)
-        capture_failure_artifacts(page, stage, str(exc))
+        capture_failure_artifacts(stage, str(exc))
         result_path = write_result(
             build_result(
                 False,
@@ -223,8 +194,6 @@ def run_physicell_monitor(
                 stage,
                 str(exc),
                 timings=timings,
-                ui_verified=False if stage == "ui_verification" else None,
-                ui_required=REQUIRE_UI_VERIFICATION,
                 preflight=preflight,
                 configured_tool_id=PHYSICELL_TOOL_ID,
                 tool_id=selected_tool_id,
@@ -251,14 +220,9 @@ def run_physicell_monitor(
 
 
 def main() -> int:
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
-        page = browser.new_page()
-        try:
-            run_physicell_monitor(page)
-        except Exception:
-            return 1
-        finally:
-            browser.close()
+    try:
+        run_physicell_monitor()
+    except Exception:
+        return 1
 
     return 0

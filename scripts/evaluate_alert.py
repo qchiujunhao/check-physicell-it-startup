@@ -222,7 +222,7 @@ def main() -> int:
         "ALERT_IMMEDIATE_STAGES",
         "authentication,tool_not_available",
     )
-    count_statuses = env_csv("ALERT_COUNT_STATUSES", "fail,slow")
+    count_statuses = env_csv("ALERT_COUNT_STATUSES", "fail")
     repeat_every = env_int("ALERT_REPEAT_EVERY", 0, minimum=0)
 
     new_state, decision = evaluate_alert(

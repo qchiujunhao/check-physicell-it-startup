@@ -2,8 +2,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from playwright.sync_api import Page
-
 from config.settings import GALAXY_BASE_URL, OUTPUT_DIR, STARTUP_EXPECTED_SECONDS
 
 
@@ -13,8 +11,6 @@ def build_result(
     failure_stage: str | None = None,
     failure_message: str | None = None,
     timings: dict[str, float] | None = None,
-    ui_verified: bool | None = None,
-    ui_required: bool | None = None,
     preflight: dict | None = None,
     configured_tool_id: str | None = None,
     tool_id: str | None = None,
@@ -51,10 +47,6 @@ def build_result(
         result["timings"] = {
             name: round(seconds, 2) for name, seconds in timings.items()
         }
-    if ui_verified is not None:
-        result["ui_verified"] = ui_verified
-    if ui_required is not None:
-        result["ui_required"] = ui_required
     if preflight is not None:
         result["preflight"] = preflight
 
@@ -85,29 +77,8 @@ def write_result(result: dict) -> Path:
     return path
 
 
-def capture_success_artifacts(page: Page | None) -> Path:
-    """Save artifacts from a successful monitor run."""
-    run_dir = get_run_dir()
-
-    if page is not None:
-        try:
-            page.screenshot(
-                path=str(run_dir / "connected.png"),
-                full_page=True,
-                timeout=10_000,
-            )
-        except Exception:
-            pass
-
-    return run_dir
-
-
-def capture_failure_artifacts(
-    page: Page | None,
-    stage: str,
-    message: str,
-) -> Path:
-    """Save screenshot and page HTML on failure. Returns the run directory."""
+def capture_failure_artifacts(stage: str, message: str) -> Path:
+    """Save failure stage metadata. Returns the run directory."""
     run_dir = get_run_dir()
     metadata = {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -115,22 +86,6 @@ def capture_failure_artifacts(
         "message": message,
     }
     (run_dir / "failure.json").write_text(json.dumps(metadata, indent=2))
-
-    if page is not None:
-        try:
-            page.screenshot(
-                path=str(run_dir / "failure.png"),
-                full_page=True,
-                timeout=10_000,
-            )
-        except Exception:
-            pass
-        try:
-            html = page.content()
-            (run_dir / "page.html").write_text(html)
-        except Exception:
-            pass
-
     return run_dir
 
 
@@ -185,16 +140,5 @@ def determine_failure_stage(exc: Exception) -> str:
     # History
     if "history" in msg:
         return "history"
-
-    # UI verification
-    if (
-        "ui verification" in msg
-        or "meaningful content" in msg
-        or "browser" in msg
-        or "novnc" in msg
-        or "canvas" in msg
-        or "vnc" in msg
-    ):
-        return "ui_verification"
 
     return "unknown"

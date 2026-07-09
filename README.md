@@ -3,8 +3,9 @@
 This repository monitors whether the PhysiCell interactive tool can start on a
 Galaxy server, currently defaulting to [usegalaxy.org](https://usegalaxy.org).
 The monitor launches the interactive tool through the Galaxy API, waits for the
-job and entry point to become available, opens the session in Chromium through
-Playwright, and records timing and failure artifacts.
+job and entry point to become available, makes one HTTP request to the entry
+point to confirm the proxy is actually serving the container, and records timing
+and failure artifacts.
 
 ## Monitoring Strategy
 
@@ -14,8 +15,9 @@ The monitor uses two layers:
    `GALAXY_BASE_URL/api/version`, and the configured PhysiCell tool metadata.
    This gives context for failures without submitting a Galaxy job.
 2. A full synthetic startup check launches the interactive tool, waits for the
-   Galaxy job and interactive-tool entry point, verifies that the browser can
-   load the session, and then stops the job.
+   Galaxy job and interactive-tool entry point, fetches the entry point over
+   HTTP to confirm the proxy is not returning an error page, and then stops the
+   job.
 
 By default, the monitor uses the latest installed PhysiCell Studio version
 reported by Galaxy's tool metadata. Set `PHYSICELL_TOOL_VERSION_POLICY=pinned`
@@ -30,19 +32,21 @@ to launch exactly the version in `PHYSICELL_TOOL_ID`.
 5. Launch the interactive tool.
 6. Wait for the Galaxy job to reach `running`.
 7. Wait for the interactive tool entry point URL.
-8. Open the entry point in Chromium and verify that the UI loaded.
-9. Write `output/<timestamp>/result.json` and screenshot artifacts.
+8. Fetch the entry point over HTTP and confirm it does not return a Galaxy
+   proxy/gateway error page.
+9. Write `output/<timestamp>/result.json` and failure artifacts.
 10. Stop the interactive tool job so the container is not left running.
 
-By default, UI verification is required. Set `REQUIRE_UI_VERIFICATION=false` if
-the environment should treat browser verification as diagnostic only.
+The entry point check is deliberately conservative: it fails only on a definite
+negative signal (a known proxy-error page, an HTTP 502/503/504 response, or a
+refused connection). Redirects, auth walls, and timeouts are treated as
+reachable so that a healthy-but-slow tool is not reported as broken.
 
 ## Requirements
 
 - Python 3.11 or newer
 - A Galaxy account with access to the PhysiCell interactive tool
 - A Galaxy API key, or a Galaxy username and password
-- Chromium installed through Playwright
 
 ## Local Setup
 
@@ -50,7 +54,6 @@ the environment should treat browser verification as diagnostic only.
 git clone <repo-url>
 cd check-physicell-it-startup
 python -m pip install -e ".[test]"
-playwright install chromium
 cp .env.example .env
 ```
 
@@ -62,8 +65,10 @@ Edit `.env` with Galaxy credentials before running the live monitor.
 check-physicell-startup
 ```
 
-The command exits with a non-zero status when startup fails, UI verification
-fails while required, or startup is slower than `STARTUP_EXPECTED_SECONDS`.
+The command exits with a non-zero status only when startup fails, including
+when the entry point serves a proxy/gateway error. Runs slower than
+`STARTUP_EXPECTED_SECONDS` are labeled `slow` in the result but exit `0`, so
+queue-driven slowness on a shared public cluster does not read as an outage.
 
 ## Run Tests
 
@@ -97,8 +102,7 @@ production checks.
 | `PREFLIGHT_TIMEOUT_SECONDS` | No | `15` | Timeout for each public preflight HTTP request. |
 | `GALAXY_STATUSPAGE_SUMMARY_URL` | No | `https://galaxyproject.statuspage.io/api/v2/summary.json` | Statuspage summary API used for broad Galaxy service context. |
 | `STARTUP_TIMEOUT_SECONDS` | No | `600` | Maximum time allowed for job startup and entry point availability. |
-| `STARTUP_EXPECTED_SECONDS` | No | `120` | Startup time threshold. Runs slower than this are reported as `slow` and fail the monitor command. |
-| `REQUIRE_UI_VERIFICATION` | No | `true` | Whether browser UI verification failure should fail the monitor run. |
+| `STARTUP_EXPECTED_SECONDS` | No | `120` | Startup time threshold. Runs slower than this are labeled `slow` in the result but do not fail the monitor command. |
 | `PURGE_REUSED_HISTORY` | No | `false` | Whether to purge datasets in an existing monitor history before launch. Disabled by default to avoid deleting data unexpectedly. |
 | `HISTORY_NAME` | No | `PhysiCell Monitor` | Galaxy history name used for monitor runs. |
 | `OUTPUT_DIR` | No | `output` | Directory where result files and artifacts are written. |
@@ -130,7 +134,7 @@ Optional repository variables:
 | `PHYSICELL_TOOL_VERSION_POLICY` | `latest` | Override the tool-version policy used by the scheduled monitor. |
 | `ALERT_FAILURE_THRESHOLD` | `2` | Number of consecutive `fail` or `slow` results before sending a threshold alert. |
 | `ALERT_IMMEDIATE_STAGES` | `authentication,tool_not_available` | Comma-separated failure stages that alert immediately on a new signature. |
-| `ALERT_COUNT_STATUSES` | `fail,slow` | Result statuses that count toward the consecutive alert threshold. |
+| `ALERT_COUNT_STATUSES` | `fail` | Result statuses that count toward the consecutive alert threshold. Add `slow` to also page on slow startups. |
 | `ALERT_REPEAT_EVERY` | `0` | Send reminder alerts every N additional alertable runs. `0` disables reminders. |
 
 `.github/workflows/ci.yml` runs fast unit tests on pull requests and pushes to
@@ -144,9 +148,6 @@ Each run writes a timestamped directory under `output/`:
 output/
   20260529T120000Z/
     result.json
-    connected.png      # success screenshot, when available
-    failure.png        # failure screenshot, when available
-    page.html          # failure page HTML, when available
     failure.json       # failure stage metadata, when available
 ```
 
@@ -171,10 +172,8 @@ Example `result.json`:
     "tool_launch_api": 2.33,
     "job_running": 74.15,
     "entry_point_available": 9.62,
-    "browser_verification": 3.57
+    "entry_point_verification": 0.41
   },
-  "ui_verified": true,
-  "ui_required": true,
   "preflight": {
     "status": "ok",
     "galaxy_version": {
@@ -195,8 +194,7 @@ Example `result.json`:
 - `job_error`: the Galaxy job entered a terminal error state.
 - `entry_point`: the interactive tool entry point did not become available or
   the Galaxy interactive-tool proxy returned an error such as `Proxy target
-  missing`.
-- `ui_verification`: Chromium could not verify a loaded noVNC or tool UI.
+  missing`, a bad gateway, or a service-unavailable page.
 - `quota_exceeded`: Galaxy quota or rate limits blocked the run.
 - `unknown`: the failure did not match a known category.
 
@@ -206,11 +204,10 @@ Example `result.json`:
   Actions secrets or the local `.env` file.
 - If it fails at `tool_not_available`, confirm the installed PhysiCell tool ID on
   the target Galaxy instance and override `PHYSICELL_TOOL_ID` if needed.
-- If it fails at `entry_point`, the job may be running before the interactive
-  endpoint is ready. Increase `STARTUP_TIMEOUT_SECONDS` only after checking
-  Galaxy job logs and artifacts.
-- If it fails at `ui_verification`, inspect `failure.png` and `page.html`.
-  If cross-origin or noVNC behavior prevents browser inspection but the endpoint
-  is otherwise acceptable, set `REQUIRE_UI_VERIFICATION=false`.
+- If it fails at `entry_point`, the entry point either never appeared or served
+  a proxy/gateway error, which usually means the container did not come up
+  behind the Galaxy proxy. Check `failure.json` and the Galaxy job logs.
+  Increase `STARTUP_TIMEOUT_SECONDS` only after confirming the job was still
+  starting rather than erroring.
 - If histories are accumulating datasets, set `PURGE_REUSED_HISTORY=true` only
   for a history dedicated to this monitor.

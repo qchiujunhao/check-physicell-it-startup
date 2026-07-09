@@ -14,18 +14,6 @@ def find_latest_result() -> dict | None:
     return json.loads(results[0].read_text())
 
 
-def find_screenshot(success: bool) -> Path | None:
-    """Find the most recent screenshot."""
-    dirs = sorted(OUTPUT_DIR.glob("*/"), reverse=True)
-    for d in dirs:
-        names = ["connected.png", "session.png"] if success else ["failure.png"]
-        for name in names:
-            path = d / name
-            if path.exists():
-                return path
-    return None
-
-
 def main() -> None:
     result = find_latest_result()
     if not result:
@@ -42,12 +30,9 @@ def main() -> None:
     env = result.get("environment", "unknown")
     timestamp = result.get("timestamp", "unknown")
     timings = result.get("timings", {})
-    ui_verified = result.get("ui_verified")
-    ui_required = result.get("ui_required")
     tool_id = result.get("tool_id")
     tool_policy = result.get("tool_version_policy")
     preflight = result.get("preflight", {})
-    screenshot = find_screenshot(status != "fail")
 
     emoji_map = {"ok": "white_check_mark", "slow": "warning", "fail": "x"}
     label_map = {"ok": "OK", "slow": "SLOW", "fail": "FAIL"}
@@ -82,13 +67,6 @@ def main() -> None:
         if expected and seconds > expected:
             time_display += f" (expected < {expected}s)"
         print(f"| **Startup Time** | {time_display} |")
-    if ui_verified is not None:
-        ui_display = "verified" if ui_verified else "not verified"
-        if ui_required is not None:
-            ui_display += f" ({'required' if ui_required else 'optional'})"
-        print(f"| **UI Verification** | {ui_display} |")
-    if screenshot:
-        print(f"| **Screenshot Artifact** | `{screenshot}` |")
     if stage:
         print(f"| **Failure Stage** | `{stage}` |")
     if message:
