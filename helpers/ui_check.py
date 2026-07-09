@@ -11,10 +11,14 @@ genuine failures when it is not:
 * a UI that never renders within the window.
 
 Login success is confirmed programmatically via ``/api/users/current`` rather
-than by scraping the login markup, and the readiness check samples canvas
-pixels, so neither depends on brittle version-specific selectors. On both
-success and failure the run directory receives a screenshot and page HTML so
-the first live run can be inspected and the readiness signal tuned if needed.
+than by scraping the login markup, so it does not depend on brittle
+version-specific selectors. The readiness check is deliberately fail-closed:
+only a readable 2D canvas that is large enough and has non-uniform pixels counts
+as painted. A canvas that cannot be read (WebGL or cross-origin tainted) or is
+too small is never treated as success -- verification keeps waiting and then
+fails with diagnostics, so a broken UI is reported rather than passing silently.
+On both success and failure the run directory receives a screenshot and page
+HTML so the run can be inspected.
 """
 
 import json
@@ -39,28 +43,41 @@ class ToolUINotReady(RuntimeError):
 # frame; a rendered noVNC framebuffer has ample colour variance.
 _PIXEL_STRIDE = 4 * 97
 
+# A real noVNC framebuffer is a full desktop resolution; anything smaller than
+# this on a side is a decorative or hidden canvas, not the tool surface.
+_MIN_CANVAS_PX = 100
+
+# Fail-closed: only a readable 2D canvas that is large enough AND has non-uniform
+# pixels counts as painted. A canvas we cannot read (WebGL/tainted) or one that
+# is too small is NOT treated as success -- we keep waiting and then fail with
+# diagnostics, so a genuinely broken UI never passes silently.
 _CANVAS_PAINTED_JS = """
 () => {
   const canvases = Array.from(document.querySelectorAll('canvas'));
+  const diag = {found: canvases.length > 0, sized: false, readable: false,
+                painted: false};
   for (const c of canvases) {
     const w = c.width, h = c.height;
-    if (!w || !h) continue;
-    let ctx;
+    if (w < __MIN__ || h < __MIN__) continue;
+    diag.sized = true;
+    let ctx = null;
     try { ctx = c.getContext('2d'); } catch (e) { ctx = null; }
-    if (!ctx) { return {found: true, painted: true, reason: 'non-2d-canvas'}; }
+    if (!ctx) continue;
     let data;
     try { data = ctx.getImageData(0, 0, w, h).data; }
-    catch (e) { return {found: true, painted: true, reason: 'canvas-unreadable'}; }
+    catch (e) { continue; }
+    diag.readable = true;
     const r0 = data[0], g0 = data[1], b0 = data[2];
     for (let i = 0; i < data.length; i += __STRIDE__) {
       if (data[i] !== r0 || data[i + 1] !== g0 || data[i + 2] !== b0) {
-        return {found: true, painted: true};
+        diag.painted = true;
+        return diag;
       }
     }
   }
-  return {found: canvases.length > 0, painted: false};
+  return diag;
 }
-""".replace("__STRIDE__", str(_PIXEL_STRIDE))
+""".replace("__STRIDE__", str(_PIXEL_STRIDE)).replace("__MIN__", str(_MIN_CANVAS_PX))
 
 
 def _proxy_error_from_text(text: str) -> str | None:
@@ -172,15 +189,16 @@ def _wait_for_rendered_ui(page: Page, tool_url: str, timeout_ms: int) -> None:
         try:
             status = page.evaluate(_CANVAS_PAINTED_JS)
         except PlaywrightError:
-            status = {"found": False, "painted": False}
+            status = {}
 
         if status.get("painted"):
             return
 
         if time.time() >= deadline:
             raise ToolUINotReady(
-                "PhysiCell tool UI did not render a frame within "
-                f"{timeout_ms / 1000:.0f}s (canvas found={status.get('found')})"
+                "PhysiCell tool UI did not paint a readable frame within "
+                f"{timeout_ms / 1000:.0f}s (canvas found={status.get('found')}, "
+                f"sized={status.get('sized')}, readable={status.get('readable')})"
             )
         page.wait_for_timeout(2000)
 
