@@ -5,15 +5,20 @@ from pathlib import Path
 
 from config.settings import (
     GALAXY_BASE_URL,
+    GALAXY_LOGIN_TIMEOUT_SECONDS,
+    GALAXY_PASSWORD,
     GALAXY_STATUSPAGE_SUMMARY_URL,
+    GALAXY_USERNAME,
     HISTORY_NAME,
     PHYSICELL_TOOL_ID,
     PHYSICELL_TOOL_VERSION_POLICY,
     PREFLIGHT_ENABLED,
     PREFLIGHT_TIMEOUT_SECONDS,
     PURGE_REUSED_HISTORY,
+    REQUIRE_UI_VERIFICATION,
     STARTUP_EXPECTED_SECONDS,
     STARTUP_TIMEOUT_SECONDS,
+    UI_VERIFY_TIMEOUT_SECONDS,
 )
 from helpers.entry_point import InteractiveToolProxyError, verify_entry_point
 from helpers.galaxy_client import (
@@ -28,8 +33,10 @@ from helpers.galaxy_client import (
 from helpers.results import (
     build_result,
     capture_failure_artifacts,
+    get_run_dir,
     write_result,
 )
+from helpers.ui_check import GalaxyLoginError, ToolUINotReady, verify_tool_ui
 
 
 def seconds_remaining(deadline: float) -> int:
@@ -70,6 +77,7 @@ def run_physicell_monitor(
     timings: dict[str, float] = {}
     preflight = None
     selected_tool_id = PHYSICELL_TOOL_ID
+    ui_verified = None
 
     try:
         if PREFLIGHT_ENABLED:
@@ -154,13 +162,46 @@ def run_physicell_monitor(
                 lambda: verify_entry_point(tool_url, timeout=30),
             )
         except InteractiveToolProxyError as exc:
+            raise InteractiveToolProxyError(
+                _redact_message(str(exc), [tool_url])
+            ) from exc
+
+        if not (GALAXY_USERNAME and GALAXY_PASSWORD):
+            raise RuntimeError(
+                "Authenticated UI verification requires GALAXY_USERNAME and "
+                "GALAXY_PASSWORD; set them or set REQUIRE_UI_VERIFICATION=false."
+            )
+
+        run_dir = get_run_dir()
+        try:
+            _time_stage(
+                "ui_verification",
+                timings,
+                log,
+                lambda: verify_tool_ui(
+                    GALAXY_BASE_URL,
+                    tool_url,
+                    GALAXY_USERNAME,
+                    GALAXY_PASSWORD,
+                    run_dir,
+                    ui_timeout=UI_VERIFY_TIMEOUT_SECONDS,
+                    login_timeout=GALAXY_LOGIN_TIMEOUT_SECONDS,
+                ),
+            )
+            ui_verified = True
+        except (InteractiveToolProxyError, GalaxyLoginError, ToolUINotReady) as exc:
+            ui_verified = False
             message = _redact_message(str(exc), [tool_url])
-            raise RuntimeError(message) from exc
+            if REQUIRE_UI_VERIFICATION:
+                raise type(exc)(message) from exc
+            log(f"[ui] verification failed but not required: {message}")
 
         result = build_result(
             True,
             startup_seconds,
             timings=timings,
+            ui_verified=ui_verified,
+            ui_required=REQUIRE_UI_VERIFICATION,
             preflight=preflight,
             configured_tool_id=PHYSICELL_TOOL_ID,
             tool_id=selected_tool_id,
@@ -194,6 +235,8 @@ def run_physicell_monitor(
                 stage,
                 str(exc),
                 timings=timings,
+                ui_verified=False if stage == "ui_verification" else ui_verified,
+                ui_required=REQUIRE_UI_VERIFICATION,
                 preflight=preflight,
                 configured_tool_id=PHYSICELL_TOOL_ID,
                 tool_id=selected_tool_id,

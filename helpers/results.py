@@ -11,6 +11,8 @@ def build_result(
     failure_stage: str | None = None,
     failure_message: str | None = None,
     timings: dict[str, float] | None = None,
+    ui_verified: bool | None = None,
+    ui_required: bool | None = None,
     preflight: dict | None = None,
     configured_tool_id: str | None = None,
     tool_id: str | None = None,
@@ -47,6 +49,10 @@ def build_result(
         result["timings"] = {
             name: round(seconds, 2) for name, seconds in timings.items()
         }
+    if ui_verified is not None:
+        result["ui_verified"] = ui_verified
+    if ui_required is not None:
+        result["ui_required"] = ui_required
     if preflight is not None:
         result["preflight"] = preflight
 
@@ -91,12 +97,14 @@ def capture_failure_artifacts(stage: str, message: str) -> Path:
 
 def determine_failure_stage(exc: Exception) -> str:
     """Best-effort classification of which stage failed."""
+    from helpers.entry_point import InteractiveToolProxyError
     from helpers.galaxy_client import (
         EntryPointTimeout,
         ToolNotAvailable,
         ToolStartupFailed,
         ToolStartupTimeout,
     )
+    from helpers.ui_check import GalaxyLoginError, ToolUINotReady
 
     # Custom exception types
     if isinstance(exc, ToolNotAvailable):
@@ -105,8 +113,12 @@ def determine_failure_stage(exc: Exception) -> str:
         return "job_timeout"
     if isinstance(exc, ToolStartupFailed):
         return "job_error"
-    if isinstance(exc, EntryPointTimeout):
+    if isinstance(exc, (EntryPointTimeout, InteractiveToolProxyError)):
         return "entry_point"
+    if isinstance(exc, GalaxyLoginError):
+        return "authentication"
+    if isinstance(exc, ToolUINotReady):
+        return "ui_verification"
 
     msg = str(exc).lower()
 
@@ -117,7 +129,13 @@ def determine_failure_stage(exc: Exception) -> str:
         return "galaxy_unreachable"
 
     # Auth issues
-    if "401" in msg or "403" in msg or "auth" in msg or "credential" in msg:
+    if (
+        "401" in msg
+        or "403" in msg
+        or "auth" in msg
+        or "credential" in msg
+        or "login" in msg
+    ):
         return "authentication"
 
     # Quota / rate limit
@@ -140,5 +158,9 @@ def determine_failure_stage(exc: Exception) -> str:
     # History
     if "history" in msg:
         return "history"
+
+    # UI verification
+    if "ui verification" in msg or "did not render" in msg or "canvas" in msg:
+        return "ui_verification"
 
     return "unknown"

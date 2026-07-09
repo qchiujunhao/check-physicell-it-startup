@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e .
 
+      - name: Install Playwright browser
+        run: playwright install chromium --with-deps
+
       - name: Restore monitor alert state
         uses: actions/cache/restore@v4
         with:
@@ -37,6 +40,8 @@ jobs:
         env:
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+          GALAXY_USERNAME: ${{ secrets.GALAXY_USERNAME }}
+          GALAXY_PASSWORD: ${{ secrets.GALAXY_PASSWORD }}
           PHYSICELL_TOOL_VERSION_POLICY: ${{ vars.PHYSICELL_TOOL_VERSION_POLICY }}
 
       - name: Write job summary
