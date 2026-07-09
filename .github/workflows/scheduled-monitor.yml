@@ -43,6 +43,13 @@ jobs:
         if: always()
         run: python scripts/write_summary.py >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Notify Slack
+        if: always()
+        run: python scripts/notify_slack.py
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: Evaluate alert
         if: always()
         run: python scripts/evaluate_alert.py

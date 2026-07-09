@@ -117,15 +117,33 @@ manual dispatch. Configure these repository secrets:
 
 - `GALAXY_BASE_URL`
 - `GALAXY_API_KEY`
-- `MONITOR_ALERT_WEBHOOK_URL` if alerts should be sent to a webhook.
+- `SLACK_WEBHOOK_URL` to post a per-run Slack message (see below).
+- `MONITOR_ALERT_WEBHOOK_URL` only if you also want threshold escalation alerts.
 
 The workflow uploads the `output/` directory as a workflow artifact and writes a
-summary with status, timing, UI verification state, and artifact paths.
+summary with status, timing, and artifact paths.
 
 The scheduled workflow runs at minute 17 instead of exactly on the hour to avoid
 the busiest GitHub Actions scheduling window. It also restores and saves
 `.monitor-state/alert-state.json` through the GitHub Actions cache so alerts can
 be based on consecutive runs rather than a single failure.
+
+### Slack notifications
+
+There are two independent Slack paths:
+
+- **Per-run notification** (`scripts/notify_slack.py`) posts one message on
+  every run — `ok`, `slow`, or `fail`. Enable it by setting the
+  `SLACK_WEBHOOK_URL` secret.
+- **Escalation alert** (`scripts/evaluate_alert.py`) pages only after repeated
+  failures. It is off unless `MONITOR_ALERT_WEBHOOK_URL` is set. Leave it unset
+  to avoid receiving two messages for the same failure.
+
+To create the webhook: in Slack, add the **Incoming Webhooks** app (or create a
+Slack app with Incoming Webhooks enabled), activate webhooks, add one for the
+target channel, and copy the generated URL. Save it as the `SLACK_WEBHOOK_URL`
+repository secret. Do not commit the URL. Locally, set `SLACK_WEBHOOK_URL` in
+`.env` and run `python scripts/notify_slack.py` after a monitor run to test it.
 
 Optional repository variables:
 
