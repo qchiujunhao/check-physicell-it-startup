@@ -66,3 +66,16 @@ def test_missing_result_payload_is_built() -> None:
     text = _block_text(notify_slack.build_missing_result_payload("https://run.example/2"))
     assert "NO RESULT" in text
     assert "<https://run.example/2|View GitHub run>" in text
+
+
+def test_screenshot_for_picks_connected_on_success(tmp_path) -> None:
+    (tmp_path / "connected.png").write_bytes(b"x")
+    (tmp_path / "failure.png").write_bytes(b"x")
+    ok_shot = notify_slack.screenshot_for(tmp_path, {"status": "ok"})
+    fail_shot = notify_slack.screenshot_for(tmp_path, {"status": "fail"})
+    assert ok_shot.name == "connected.png"
+    assert fail_shot.name == "failure.png"
+
+
+def test_screenshot_for_returns_none_when_absent(tmp_path) -> None:
+    assert notify_slack.screenshot_for(tmp_path, {"status": "ok"}) is None

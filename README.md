@@ -142,7 +142,8 @@ manual dispatch. Configure these repository secrets:
 - `GALAXY_BASE_URL`
 - `GALAXY_API_KEY`
 - `GALAXY_USERNAME` and `GALAXY_PASSWORD` for authenticated UI verification.
-- `SLACK_WEBHOOK_URL` to post a per-run Slack message (see below).
+- `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` to post a per-run Slack message with
+  the run screenshot (see below), or `SLACK_WEBHOOK_URL` for a text-only message.
 - `MONITOR_ALERT_WEBHOOK_URL` only if you also want threshold escalation alerts.
 
 The workflow uploads the `output/` directory as a workflow artifact and writes a
@@ -170,17 +171,27 @@ cleanup needs only `GALAXY_BASE_URL` and `GALAXY_API_KEY`. Run it locally with
 There are two independent Slack paths:
 
 - **Per-run notification** (`scripts/notify_slack.py`) posts one message on
-  every run — `ok`, `slow`, or `fail`. Enable it by setting the
-  `SLACK_WEBHOOK_URL` secret.
+  every run — `ok`, `slow`, or `fail`.
 - **Escalation alert** (`scripts/evaluate_alert.py`) pages only after repeated
   failures. It is off unless `MONITOR_ALERT_WEBHOOK_URL` is set. Leave it unset
   to avoid receiving two messages for the same failure.
 
-To create the webhook: in Slack, add the **Incoming Webhooks** app (or create a
-Slack app with Incoming Webhooks enabled), activate webhooks, add one for the
-target channel, and copy the generated URL. Save it as the `SLACK_WEBHOOK_URL`
-repository secret. Do not commit the URL. Locally, set `SLACK_WEBHOOK_URL` in
-`.env` and run `python scripts/notify_slack.py` after a monitor run to test it.
+The per-run notification has two delivery modes, preferred in this order:
+
+- **Bot token (recommended)** — set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID`. It
+  uploads the run screenshot (`connected.png` on success, `failure.png` on
+  failure) with the status as the file comment. This is the only mode that can
+  attach the image, because Incoming Webhooks cannot upload files.
+- **Incoming Webhook** — set `SLACK_WEBHOOK_URL`. Text-only; no screenshot. Used
+  as a fallback only when no bot token is set.
+
+To set up the bot token: create a Slack app, add the **`chat:write`** and
+**`files:write`** bot scopes, install it to the workspace, and copy the bot
+token (`xoxb-…`). Invite the bot to the target channel (`/invite @yourbot`) and
+copy the channel ID (channel details → bottom of the About tab). Save them as
+the `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` repository secrets. Do not commit
+them. Locally, set both in `.env` and run `python scripts/notify_slack.py` after
+a monitor run to test it.
 
 Optional repository variables:
 
