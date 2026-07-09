@@ -37,10 +37,14 @@ to launch exactly the version in `PHYSICELL_TOOL_ID`.
 9. Write `output/<timestamp>/result.json` and failure artifacts.
 10. Stop the interactive tool job so the container is not left running.
 
-The entry point check is deliberately conservative: it fails only on a definite
-negative signal (a known proxy-error page, an HTTP 502/503/504 response, or a
-refused connection). Redirects, auth walls, and timeouts are treated as
-reachable so that a healthy-but-slow tool is not reported as broken.
+The entry point check probes the URL over HTTP and fails only on a persistent
+negative signal: a known proxy-error page, an HTTP 502/503/504 response, or no
+response at all (timeout or connection error). It retries within a window, so a
+one-off blip right after startup does not fail a healthy tool. Redirects and
+auth walls (401/403) are treated as reachable, because the probe is
+unauthenticated and cannot conclude from them that the backend is down. A pass
+therefore means "not visibly broken", not "verified working"; confirming the
+rendered UI would require an authenticated browser session.
 
 ## Requirements
 
