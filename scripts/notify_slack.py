@@ -98,8 +98,23 @@ def _summary_lines(result: dict, run_url: str | None) -> list[str]:
     return lines
 
 
+def _failure_mention() -> str:
+    """A Slack mention to prepend on failures, e.g. ``<@U123>``.
+
+    Set ``SLACK_MENTION_USER_ID`` to a member ID to be pinged when a run fails.
+    """
+    uid = os.getenv("SLACK_MENTION_USER_ID", "").strip()
+    return f"<@{uid}>\n" if uid else ""
+
+
+def _is_failure(result: dict) -> bool:
+    status = result.get("status") or ("ok" if result.get("success") else "fail")
+    return status == "fail"
+
+
 def summary_text(result: dict, run_url: str | None) -> str:
-    return "\n".join(_summary_lines(result, run_url))
+    prefix = _failure_mention() if _is_failure(result) else ""
+    return prefix + "\n".join(_summary_lines(result, run_url))
 
 
 def missing_result_text(run_url: str | None) -> str:
@@ -110,7 +125,7 @@ def missing_result_text(run_url: str | None) -> str:
     ]
     if run_url:
         lines.append(f"<{run_url}|View GitHub run>")
-    return "\n".join(lines)
+    return _failure_mention() + "\n".join(lines)
 
 
 def _section(text: str) -> dict:
