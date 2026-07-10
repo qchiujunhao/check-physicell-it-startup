@@ -79,3 +79,21 @@ def test_screenshot_for_picks_connected_on_success(tmp_path) -> None:
 
 def test_screenshot_for_returns_none_when_absent(tmp_path) -> None:
     assert notify_slack.screenshot_for(tmp_path, {"status": "ok"}) is None
+
+
+def test_failure_mentions_user_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("SLACK_MENTION_USER_ID", "U06M3MMR588")
+    fail = notify_slack.summary_text({"status": "fail"}, None)
+    ok = notify_slack.summary_text({"status": "ok"}, None)
+    slow = notify_slack.summary_text({"status": "slow"}, None)
+    missing = notify_slack.missing_result_text(None)
+
+    assert fail.startswith("<@U06M3MMR588>")
+    assert missing.startswith("<@U06M3MMR588>")
+    assert "<@U06M3MMR588>" not in ok
+    assert "<@U06M3MMR588>" not in slow
+
+
+def test_no_mention_when_unset(monkeypatch) -> None:
+    monkeypatch.delenv("SLACK_MENTION_USER_ID", raising=False)
+    assert "<@" not in notify_slack.summary_text({"status": "fail"}, None)
