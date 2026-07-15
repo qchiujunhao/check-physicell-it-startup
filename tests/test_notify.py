@@ -97,3 +97,9 @@ def test_failure_mentions_user_when_configured(monkeypatch) -> None:
 def test_no_mention_when_unset(monkeypatch) -> None:
     monkeypatch.delenv("SLACK_MENTION_USER_ID", raising=False)
     assert "<@" not in notify_slack.summary_text({"status": "fail"}, None)
+
+
+def test_multiple_mentions(monkeypatch) -> None:
+    monkeypatch.setenv("SLACK_MENTION_USER_ID", "U06M3MMR588, U6LDS1MS6")
+    fail = notify_slack.summary_text({"status": "fail"}, None)
+    assert fail.startswith("<@U06M3MMR588> <@U6LDS1MS6>")

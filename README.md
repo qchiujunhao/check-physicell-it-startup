@@ -194,16 +194,17 @@ them. Locally, set both in `.env` and run `python scripts/notify_slack.py` after
 a monitor run to test it.
 
 To be `@`-mentioned only when a run fails, set `SLACK_MENTION_USER_ID` to your
-Slack member ID (profile → More → Copy member ID; it starts with `U`). It is not
-secret, so set it as a repository **variable**. Successful and slow runs are not
-mentioned.
+Slack member ID (profile → More → Copy member ID; it starts with `U`). Use a
+comma- or space-separated list to mention several people. It is not secret, so
+set it as a repository **variable**. Successful and slow runs are not mentioned,
+and mentioned users must be members of the channel to actually be notified.
 
 Optional repository variables:
 
 | Variable | Default | Description |
 |---|---|---|
 | `PHYSICELL_TOOL_VERSION_POLICY` | `latest` | Override the tool-version policy used by the scheduled monitor. |
-| `SLACK_MENTION_USER_ID` | | Slack member ID (`U…`) to `@`-mention when a run fails. Empty disables mentions. |
+| `SLACK_MENTION_USER_ID` | | Slack member ID(s) (`U…`, comma/space-separated) to `@`-mention when a run fails. Empty disables mentions. |
 | `ALERT_FAILURE_THRESHOLD` | `2` | Number of consecutive `fail` or `slow` results before sending a threshold alert. |
 | `ALERT_IMMEDIATE_STAGES` | `authentication,tool_not_available` | Comma-separated failure stages that alert immediately on a new signature. |
 | `ALERT_COUNT_STATUSES` | `fail` | Result statuses that count toward the consecutive alert threshold. Add `slow` to also page on slow startups. |
