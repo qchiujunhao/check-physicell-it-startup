@@ -99,12 +99,16 @@ def _summary_lines(result: dict, run_url: str | None) -> list[str]:
 
 
 def _failure_mention() -> str:
-    """A Slack mention to prepend on failures, e.g. ``<@U123>``.
+    """Slack mentions to prepend on failures, e.g. ``<@U123> <@U456>``.
 
-    Set ``SLACK_MENTION_USER_ID`` to a member ID to be pinged when a run fails.
+    Set ``SLACK_MENTION_USER_ID`` to one or more member IDs (comma- or
+    space-separated) to be pinged when a run fails.
     """
-    uid = os.getenv("SLACK_MENTION_USER_ID", "").strip()
-    return f"<@{uid}>\n" if uid else ""
+    raw = os.getenv("SLACK_MENTION_USER_ID", "")
+    ids = [uid.strip() for uid in raw.replace(",", " ").split() if uid.strip()]
+    if not ids:
+        return ""
+    return " ".join(f"<@{uid}>" for uid in ids) + "\n"
 
 
 def _is_failure(result: dict) -> bool:
