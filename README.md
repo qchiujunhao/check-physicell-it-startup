@@ -54,6 +54,14 @@ browser context) so a single stalled request does not fail the run. If it never
 loads, the run fails at `galaxy_unreachable`, not `authentication`: no
 credentials were submitted.
 
+Every Galaxy API request has a timeout (`GALAXY_API_TIMEOUT_SECONDS`), because a
+request that Galaxy accepts and never answers would otherwise block the run
+until the CI job is killed, leaving the interactive tool running. While the
+monitor waits for the job and its entry point, a poll that goes unanswered or
+comes back as a gateway error is not held against the tool: polling carries on
+until `STARTUP_TIMEOUT_SECONDS`. If the API is still not answering by then, the
+run fails at `galaxy_unreachable`.
+
 > The Galaxy login markup and the tool's readiness signal can vary by version.
 > Login success is confirmed via `/api/users/current` and readiness by sampling
 > canvas pixels, and every run saves a screenshot and page HTML, so the first
@@ -128,6 +136,7 @@ production checks.
 | `REQUIRE_UI_VERIFICATION` | No | `true` | Whether a UI verification failure should fail the monitor run. Set `false` to treat it as diagnostic only. |
 | `UI_VERIFY_TIMEOUT_SECONDS` | No | `60` | Max seconds to wait for the tool UI to render a frame. |
 | `GALAXY_LOGIN_TIMEOUT_SECONDS` | No | `30` | Max seconds to establish the browser login session. |
+| `GALAXY_API_TIMEOUT_SECONDS` | No | `60` | Longest wait for any single Galaxy API request, for both the monitor and the cleanup. |
 | `PURGE_REUSED_HISTORY` | No | `false` | Whether to purge datasets in an existing monitor history before launch. Disabled by default to avoid deleting data unexpectedly. |
 | `HISTORY_NAME` | No | `PhysiCell Monitor` | Galaxy history name used for monitor runs. |
 | `CLEANUP_MIN_AGE_MINUTES` | No | `60` | Scheduled cleanup only cancels jobs older than this, so it never kills an in-flight monitor run. |
@@ -271,8 +280,9 @@ Example `result.json`:
 
 ## Failure Stages
 
-- `galaxy_unreachable`: Galaxy could not be reached or resolved, or its login
-  page never loaded in the browser.
+- `galaxy_unreachable`: Galaxy could not be reached or resolved, its API
+  stopped answering (timeouts or gateway errors), or its login page never
+  loaded in the browser.
 - `authentication`: credentials are missing, invalid, or unauthorized.
 - `tool_not_available`: the configured PhysiCell tool ID is not installed or enabled.
 - `history`: creating or reusing the Galaxy history failed.

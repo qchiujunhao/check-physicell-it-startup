@@ -269,8 +269,13 @@ def run_physicell_monitor(
         if gi and job_id:
             log("")
             log("Stopping interactive tool session...")
-            stop_interactive_tool(gi, job_id)
-            log("Interactive tool session stopped.")
+            if stop_interactive_tool(gi, job_id) is False:
+                log(
+                    "Galaxy did not confirm the stop; the scheduled cleanup "
+                    "cancels the job if it is still running."
+                )
+            else:
+                log("Interactive tool session stopped.")
 
 
 def main() -> int:

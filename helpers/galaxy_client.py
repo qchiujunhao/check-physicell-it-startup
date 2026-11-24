@@ -4,10 +4,13 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import bioblend
+import requests
 from bioblend.galaxy import GalaxyInstance
 
 from config.settings import (
     GALAXY_API_KEY,
+    GALAXY_API_TIMEOUT_SECONDS,
     GALAXY_BASE_URL,
     GALAXY_PASSWORD,
     GALAXY_STATUSPAGE_SUMMARY_URL,
@@ -15,20 +18,78 @@ from config.settings import (
     PREFLIGHT_TIMEOUT_SECONDS,
 )
 
+# How many times BioBlend tries a GET that Galaxy answers with an error such as
+# a 502 from its proxy, and how long it pauses in between.
+_GET_ATTEMPTS = 3
+_GET_RETRY_DELAY_SECONDS = 2
+
+# When a polling loop gives up, this many unanswered polls in a row mean the
+# API itself was down rather than the tool still starting.
+_API_OUTAGE_POLLS = 3
+
+# How many times to send the cancel request when Galaxy does not answer it.
+_STOP_ATTEMPTS = 2
+
 
 def get_galaxy_instance() -> GalaxyInstance:
     """Connect to Galaxy using API key or username/password."""
     if GALAXY_API_KEY:
-        return GalaxyInstance(GALAXY_BASE_URL, key=GALAXY_API_KEY)
-
-    if GALAXY_USERNAME and GALAXY_PASSWORD:
-        return GalaxyInstance(
+        gi = GalaxyInstance(GALAXY_BASE_URL, key=GALAXY_API_KEY)
+    elif GALAXY_USERNAME and GALAXY_PASSWORD:
+        gi = GalaxyInstance(
             GALAXY_BASE_URL, email=GALAXY_USERNAME, password=GALAXY_PASSWORD
         )
+    else:
+        raise ValueError(
+            "Set GALAXY_API_KEY or both GALAXY_USERNAME and GALAXY_PASSWORD"
+        )
 
-    raise ValueError(
-        "Set GALAXY_API_KEY or both GALAXY_USERNAME and GALAXY_PASSWORD"
-    )
+    # BioBlend sends requests with no timeout unless told otherwise. A request
+    # that Galaxy accepts and never answers would then block the run until the
+    # CI job is killed, which also skips stopping the interactive tool.
+    gi.timeout = GALAXY_API_TIMEOUT_SECONDS
+    gi.max_get_attempts = _GET_ATTEMPTS
+    gi.get_retry_delay = _GET_RETRY_DELAY_SECONDS
+    return gi
+
+
+class GalaxyAPIUnavailable(RuntimeError):
+    """Raised when Galaxy's API stopped answering while the monitor polled it.
+
+    The startup timeouts below mean the API kept answering and the tool was
+    simply not ready yet. This one means the monitor could not find out.
+    """
+
+
+def is_transient_galaxy_error(exc: BaseException) -> bool:
+    """Whether an API error means Galaxy failed to answer, not that it said no.
+
+    Timeouts, dropped connections, gateway errors and non-JSON bodies come and
+    go on a busy public server. A 4xx is Galaxy's actual answer.
+    """
+    if isinstance(exc, bioblend.ConnectionError):
+        status = exc.status_code
+    elif isinstance(exc, requests.exceptions.HTTPError):
+        status = getattr(exc.response, "status_code", None)
+    else:
+        return isinstance(
+            exc,
+            (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.JSONDecodeError,
+            ),
+        )
+    return status is None or not 400 <= status < 500
+
+
+def _brief(exc: BaseException) -> str:
+    """One short line for an API error; BioBlend's can carry a whole HTML page."""
+    lines = str(exc).strip().splitlines()
+    text = lines[0] if lines else ""
+    if len(text) > 200:
+        text = text[:200] + "..."
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 def get_or_create_history(
@@ -256,6 +317,9 @@ def check_tool_exists(gi: GalaxyInstance, tool_id: str) -> None:
     try:
         tool = gi.tools.show_tool(tool_id)
     except Exception as exc:
+        if is_transient_galaxy_error(exc):
+            # Galaxy did not answer, which says nothing about the tool.
+            raise
         raise ToolNotAvailable(
             f"Tool '{tool_id}' not found on {gi.base_url}. "
             "It may be disabled, removed, or the tool ID is wrong."
@@ -292,10 +356,27 @@ class EntryPointTimeout(Exception):
 def wait_for_tool_ready(
     gi: GalaxyInstance, job_id: str, timeout: int, poll_interval: int = 3
 ) -> None:
-    """Poll job state until running. Raises on timeout or error."""
+    """Poll job state until running. Raises on timeout or error.
+
+    A poll that Galaxy fails to answer is not held against the job: polling
+    carries on until the deadline. If the API was still not answering by then,
+    that is reported as ``GalaxyAPIUnavailable`` rather than a slow job.
+    """
     deadline = time.time() + timeout
+    unanswered = 0
+    api_issue = ""
     while time.time() < deadline:
-        job = gi.jobs.show_job(job_id, full_details=True)
+        try:
+            job = gi.jobs.show_job(job_id, full_details=True)
+        except Exception as exc:
+            if not is_transient_galaxy_error(exc):
+                raise
+            unanswered += 1
+            api_issue = _brief(exc)
+            time.sleep(poll_interval)
+            continue
+
+        unanswered = 0
         state = job.get("state", "unknown")
 
         if state == "running":
@@ -307,6 +388,11 @@ def wait_for_tool_ready(
 
         time.sleep(poll_interval)
 
+    if unanswered >= _API_OUTAGE_POLLS:
+        raise GalaxyAPIUnavailable(
+            f"Galaxy API stopped answering while job {job_id} was starting "
+            f"({unanswered} polls in a row, waited {timeout}s): {api_issue}"
+        )
     raise ToolStartupTimeout(
         f"Job {job_id} did not reach 'running' within {timeout}s"
     )
@@ -322,6 +408,8 @@ def get_interactive_tool_url(
 
     Uses the Galaxy API endpoint /api/entry_points which may not be
     exposed through BioBlend directly.
+
+    Unanswered polls are handled as in ``wait_for_tool_ready``.
     """
     deadline = time.time() + timeout
     url = f"{gi.base_url}/api/entry_points?job_id={job_id}"
@@ -330,10 +418,23 @@ def get_interactive_tool_url(
         "The tool may not be an interactive tool."
     )
 
+    unanswered = 0
+    api_issue = ""
+
     while time.time() < deadline:
-        response = gi.make_get_request(url)
-        response.raise_for_status()
-        entry_points = response.json()
+        try:
+            response = gi.make_get_request(url)
+            response.raise_for_status()
+            entry_points = response.json()
+        except Exception as exc:
+            if not is_transient_galaxy_error(exc):
+                raise
+            unanswered += 1
+            api_issue = _brief(exc)
+            time.sleep(poll_interval)
+            continue
+
+        unanswered = 0
 
         if not entry_points:
             last_issue = (
@@ -361,23 +462,41 @@ def get_interactive_tool_url(
         )
         time.sleep(poll_interval)
 
+    if unanswered >= _API_OUTAGE_POLLS:
+        raise GalaxyAPIUnavailable(
+            f"Galaxy API stopped answering while waiting for the entry point of "
+            f"job {job_id} ({unanswered} polls in a row, waited {timeout}s): "
+            f"{api_issue}"
+        )
     raise EntryPointTimeout(f"{last_issue} after waiting {timeout}s")
 
 
-def stop_interactive_tool(gi: GalaxyInstance, job_id: str) -> None:
-    """Cancel the interactive tool job to stop the running container."""
-    try:
-        gi.jobs.cancel_job(job_id)
-    except Exception:
-        # Also try the entry_points API to mark it as stopped
+def stop_interactive_tool(gi: GalaxyInstance, job_id: str) -> bool:
+    """Cancel the interactive tool job to stop the running container.
+
+    Returns False when Galaxy never confirmed the stop, so the caller does not
+    report a session as stopped that may still be running.
+    """
+    for _ in range(_STOP_ATTEMPTS):
         try:
-            url = f"{gi.base_url}/api/entry_points?job_id={job_id}"
-            response = gi.make_get_request(url)
-            response.raise_for_status()
-            for ep in response.json():
-                ep_id = ep.get("id")
-                if ep_id:
-                    delete_url = f"{gi.base_url}/api/entry_points/{ep_id}"
-                    gi.make_delete_request(delete_url)
-        except Exception:
-            pass
+            gi.jobs.cancel_job(job_id)
+            return True
+        except Exception as exc:
+            if not is_transient_galaxy_error(exc):
+                break
+
+    # Also try the entry_points API to mark it as stopped
+    try:
+        url = f"{gi.base_url}/api/entry_points?job_id={job_id}"
+        response = gi.make_get_request(url)
+        response.raise_for_status()
+        stopped = False
+        for ep in response.json():
+            ep_id = ep.get("id")
+            if ep_id:
+                delete_url = f"{gi.base_url}/api/entry_points/{ep_id}"
+                gi.make_delete_request(delete_url).raise_for_status()
+                stopped = True
+        return stopped
+    except Exception:
+        return False

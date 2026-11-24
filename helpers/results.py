@@ -100,9 +100,11 @@ def determine_failure_stage(exc: Exception) -> str:
     from helpers.entry_point import InteractiveToolProxyError
     from helpers.galaxy_client import (
         EntryPointTimeout,
+        GalaxyAPIUnavailable,
         ToolNotAvailable,
         ToolStartupFailed,
         ToolStartupTimeout,
+        is_transient_galaxy_error,
     )
     from helpers.ui_check import (
         GalaxyLoginError,
@@ -126,6 +128,13 @@ def determine_failure_stage(exc: Exception) -> str:
         return "authentication"
     if isinstance(exc, ToolUINotReady):
         return "ui_verification"
+
+    # Galaxy's API timed out, dropped the connection or answered with a
+    # gateway error. This is decided on the error itself: such a message can
+    # carry a whole HTML error page, which the keyword checks below would
+    # match more or less at random.
+    if isinstance(exc, GalaxyAPIUnavailable) or is_transient_galaxy_error(exc):
+        return "galaxy_unreachable"
 
     msg = str(exc).lower()
 

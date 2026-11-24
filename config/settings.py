@@ -57,6 +57,9 @@ GALAXY_BASE_URL = env_or_default("GALAXY_BASE_URL", "https://usegalaxy.org")
 GALAXY_API_KEY = env_or_empty("GALAXY_API_KEY")
 GALAXY_USERNAME = env_or_empty("GALAXY_USERNAME")
 GALAXY_PASSWORD = env_or_empty("GALAXY_PASSWORD")
+# Longest the monitor waits on a single Galaxy API request. Without it one
+# request that Galaxy never answers blocks the whole run.
+GALAXY_API_TIMEOUT_SECONDS = env_int("GALAXY_API_TIMEOUT_SECONDS", 60, minimum=1)
 
 PHYSICELL_TOOL_ID = env_or_default(
     "PHYSICELL_TOOL_ID",
