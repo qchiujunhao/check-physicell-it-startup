@@ -180,6 +180,14 @@ histories, and it only cancels jobs older than `CLEANUP_MIN_AGE_MINUTES`
 cleanup needs only `GALAXY_BASE_URL` and `GALAXY_API_KEY`. Run it locally with
 `python scripts/cleanup.py`.
 
+The sweep is deliberately gentle on Galaxy. It lists the history in one
+request, pauses a second between purge requests, and stops as soon as Galaxy's
+proxy answers HTTP 429 (rate limited) or after a time budget of 7 minutes, so
+the job ends with a summary instead of being killed at its 10-minute limit.
+Datasets it did not get to are reported and left for the next run, which skips
+everything already purged. A run fails only if there was a backlog and nothing
+at all could be purged.
+
 ### Slack notifications
 
 There are two independent Slack paths:

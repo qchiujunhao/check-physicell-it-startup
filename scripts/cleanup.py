@@ -6,14 +6,37 @@ datasets accumulate in the monitor history. This runs on a schedule to sweep up
 those leaks. It is scoped strictly to ``HISTORY_NAME`` so it never touches other
 histories, and it only cancels jobs older than ``CLEANUP_MIN_AGE_MINUTES`` so it
 cannot kill a monitor run that is still in flight.
+
+Purging is paced and bounded: it pauses between requests, stops as soon as
+Galaxy's proxy answers HTTP 429 (rate limited), and stops after a time budget.
+Whatever is left is picked up by the next run, which skips everything already
+purged, so a large backlog is worked off over a few days.
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 
 from config.settings import CLEANUP_MIN_AGE_MINUTES, HISTORY_NAME
-from helpers.galaxy_client import get_galaxy_instance
+from helpers.galaxy_client import brief_error, get_galaxy_instance
 
 _TERMINAL_STATES = {"ok", "error", "deleted", "discarded", "failed", "deleted_new"}
+
+# Stop purging this long after the sweep starts. The workflow allows the job
+# 10 minutes; this leaves room for setup and for one last slow request.
+_TIME_BUDGET_SECONDS = 420
+
+# Pause between purge requests. usegalaxy.org's proxy rate-limits API clients,
+# and a daily background sweep has no reason to send requests back to back.
+_PURGE_PAUSE_SECONDS = 1.0
+
+
+def _say(message: str) -> None:
+    # Flushed, so that a run which is killed still shows how far it got.
+    print(message, flush=True)
+
+
+def _rate_limited(exc: Exception) -> bool:
+    return getattr(exc, "status_code", None) == 429
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -50,36 +73,78 @@ def cancel_active_jobs(gi, history_id: str, min_age_minutes: int) -> int:
             gi.jobs.cancel_job(job["id"])
             cancelled += 1
         except Exception as exc:
-            print(f"warning: could not cancel job {job.get('id')}: {exc}")
+            reason = brief_error(exc)
+            _say(f"warning: could not cancel job {job.get('id')}: {reason}")
     return cancelled
 
 
-def purge_datasets(gi, history_id: str) -> int:
+def list_unpurged_datasets(gi, history_id: str) -> list[dict]:
+    """List the history's datasets that still hold data, in a single request.
+
+    BioBlend's ``show_matching_datasets`` looks every item up with a request of
+    its own. Once the monitor history held months of runs, that alone took
+    longer than the job is allowed, so nothing was ever purged.
+    """
+    contents = gi.histories.show_history(history_id, contents=True)
+    return [
+        item
+        for item in contents
+        if item.get("history_content_type", "dataset") == "dataset"
+        and not item.get("purged")
+    ]
+
+
+def purge_datasets(
+    gi, history_id: str, deadline: float | None = None
+) -> tuple[int, int]:
+    """Purge what is not purged yet. Returns (purged, left for the next run)."""
+    pending = list_unpurged_datasets(gi, history_id)
+    _say(f"{len(pending)} dataset(s) to purge.")
     purged = 0
-    for dataset in gi.histories.show_matching_datasets(history_id):
-        if dataset.get("purged"):
-            continue
+    for index, dataset in enumerate(pending):
+        if deadline is not None and time.monotonic() >= deadline:
+            _say("Time budget used up; stopping here.")
+            break
+        if index:
+            time.sleep(_PURGE_PAUSE_SECONDS)
         try:
             gi.histories.delete_dataset(history_id, dataset["id"], purge=True)
             purged += 1
         except Exception as exc:
-            print(f"warning: could not purge dataset {dataset.get('id')}: {exc}")
-    return purged
+            if _rate_limited(exc):
+                # More requests now would only be refused too.
+                _say("Galaxy is rate-limiting requests (HTTP 429); stopping here.")
+                break
+            reason = brief_error(exc)
+            _say(f"warning: could not purge dataset {dataset.get('id')}: {reason}")
+    return purged, len(pending) - purged
 
 
 def main() -> int:
-    gi = get_galaxy_instance()
-    history_id = find_history_id(gi, HISTORY_NAME)
-    if history_id is None:
-        print(f"No '{HISTORY_NAME}' history found; nothing to clean up.")
-        return 0
+    deadline = time.monotonic() + _TIME_BUDGET_SECONDS
+    try:
+        gi = get_galaxy_instance()
+        history_id = find_history_id(gi, HISTORY_NAME)
+        if history_id is None:
+            _say(f"No '{HISTORY_NAME}' history found; nothing to clean up.")
+            return 0
 
-    cancelled = cancel_active_jobs(gi, history_id, CLEANUP_MIN_AGE_MINUTES)
-    purged = purge_datasets(gi, history_id)
-    print(
+        cancelled = cancel_active_jobs(gi, history_id, CLEANUP_MIN_AGE_MINUTES)
+        _say(f"Cancelled {cancelled} active job(s).")
+        purged, left = purge_datasets(gi, history_id, deadline)
+    except Exception as exc:
+        _say(f"Cleanup failed: {brief_error(exc)}")
+        return 1
+
+    _say(
         f"Cleanup complete for history '{HISTORY_NAME}': "
         f"cancelled {cancelled} active job(s), purged {purged} dataset(s)."
     )
+    if left:
+        _say(f"{left} dataset(s) are left for the next run.")
+    if left and not purged:
+        # A backlog and no progress at all is a failure, not a partial sweep.
+        return 1
     return 0
 
 

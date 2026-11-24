@@ -83,7 +83,7 @@ def is_transient_galaxy_error(exc: BaseException) -> bool:
     return status is None or not 400 <= status < 500
 
 
-def _brief(exc: BaseException) -> str:
+def brief_error(exc: BaseException) -> str:
     """One short line for an API error; BioBlend's can carry a whole HTML page."""
     lines = str(exc).strip().splitlines()
     text = lines[0] if lines else ""
@@ -372,7 +372,7 @@ def wait_for_tool_ready(
             if not is_transient_galaxy_error(exc):
                 raise
             unanswered += 1
-            api_issue = _brief(exc)
+            api_issue = brief_error(exc)
             time.sleep(poll_interval)
             continue
 
@@ -430,7 +430,7 @@ def get_interactive_tool_url(
             if not is_transient_galaxy_error(exc):
                 raise
             unanswered += 1
-            api_issue = _brief(exc)
+            api_issue = brief_error(exc)
             time.sleep(poll_interval)
             continue
 
