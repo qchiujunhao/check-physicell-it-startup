@@ -19,7 +19,18 @@ from datetime import UTC, datetime, timedelta
 from config.settings import CLEANUP_MIN_AGE_MINUTES, HISTORY_NAME
 from helpers.galaxy_client import brief_error, get_galaxy_instance
 
-_TERMINAL_STATES = {"ok", "error", "deleted", "discarded", "failed", "deleted_new"}
+# States in which there is nothing left to cancel. "deleting" belongs here:
+# Galaxy already has the cancel and answers a second one with "already
+# finished". Jobs can sit in that state for months on usegalaxy.org.
+_TERMINAL_STATES = {
+    "ok",
+    "error",
+    "deleting",
+    "deleted",
+    "discarded",
+    "failed",
+    "deleted_new",
+}
 
 # Stop purging this long after the sweep starts. The workflow allows the job
 # 10 minutes; this leaves room for setup and for one last slow request.
@@ -69,9 +80,8 @@ def cancel_active_jobs(gi, history_id: str, min_age_minutes: int) -> int:
     for job in gi.jobs.get_jobs(history_id=history_id):
         if not _should_cancel(job, now, min_age_minutes):
             continue
-        # The state is logged because Galaxy can accept a cancel and still take
-        # a while to finish it: a job that keeps turning up here as "deleting"
-        # is being torn down, one that keeps turning up as "running" is not.
+        # The state is logged so that a job which keeps turning up here can be
+        # recognised: the cancel is evidently not taking effect for it.
         label = (
             f"job {job.get('id')} (state {job.get('state', 'unknown')}, "
             f"created {job.get('create_time', 'unknown')})"
@@ -81,10 +91,10 @@ def cancel_active_jobs(gi, history_id: str, min_age_minutes: int) -> int:
         except Exception as exc:
             _say(f"warning: could not cancel {label}: {brief_error(exc)}")
             continue
-        cancelled += 1
         if took_effect is False:
             _say(f"Galaxy reports {label} as already finished.")
         else:
+            cancelled += 1
             _say(f"Galaxy accepted the cancel for {label}.")
     return cancelled
 

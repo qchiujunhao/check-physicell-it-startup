@@ -109,17 +109,27 @@ def test_cancel_active_jobs_logs_each_job_state_and_outcome(capsys) -> None:
     gi = _FakeGi(
         jobs=[
             {"id": "live", "state": "running", "create_time": _iso(180)},
-            {"id": "gone", "state": "deleting", "create_time": _iso(180)},
+            {"id": "gone", "state": "queued", "create_time": _iso(180)},
         ]
     )
     gi.jobs.already_finished = {"gone"}
 
-    assert cleanup.cancel_active_jobs(gi, "h1", 60) == 2
+    # Only the cancel that changed something is counted.
+    assert cleanup.cancel_active_jobs(gi, "h1", 60) == 1
 
     out = capsys.readouterr().out
     assert "Galaxy accepted the cancel for job live (state running, created" in out
-    assert "Galaxy reports job gone (state deleting, created" in out
+    assert "Galaxy reports job gone (state queued, created" in out
     assert "as already finished." in out
+
+
+def test_cancel_active_jobs_leaves_jobs_galaxy_is_already_deleting() -> None:
+    gi = _FakeGi(
+        jobs=[{"id": "stuck", "state": "deleting", "create_time": _iso(90000)}]
+    )
+
+    assert cleanup.cancel_active_jobs(gi, "h1", 60) == 0
+    assert gi.jobs.cancelled == []
 
 
 def test_purge_datasets_skips_already_purged() -> None:
