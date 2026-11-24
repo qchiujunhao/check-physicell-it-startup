@@ -30,6 +30,10 @@ jobs:
           # Flush each line as it is printed, so a run that is cut short still
           # shows how far it got.
           PYTHONUNBUFFERED: "1"
+          # Listing the monitor history is one large request that takes 30-50
+          # seconds on usegalaxy.org, too close to the monitor's 60-second
+          # default for comfort.
+          GALAXY_API_TIMEOUT_SECONDS: "120"
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
           CLEANUP_MIN_AGE_MINUTES: ${{ vars.CLEANUP_MIN_AGE_MINUTES }}

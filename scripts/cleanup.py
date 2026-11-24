@@ -69,12 +69,23 @@ def cancel_active_jobs(gi, history_id: str, min_age_minutes: int) -> int:
     for job in gi.jobs.get_jobs(history_id=history_id):
         if not _should_cancel(job, now, min_age_minutes):
             continue
+        # The state is logged because Galaxy can accept a cancel and still take
+        # a while to finish it: a job that keeps turning up here as "deleting"
+        # is being torn down, one that keeps turning up as "running" is not.
+        label = (
+            f"job {job.get('id')} (state {job.get('state', 'unknown')}, "
+            f"created {job.get('create_time', 'unknown')})"
+        )
         try:
-            gi.jobs.cancel_job(job["id"])
-            cancelled += 1
+            took_effect = gi.jobs.cancel_job(job["id"])
         except Exception as exc:
-            reason = brief_error(exc)
-            _say(f"warning: could not cancel job {job.get('id')}: {reason}")
+            _say(f"warning: could not cancel {label}: {brief_error(exc)}")
+            continue
+        cancelled += 1
+        if took_effect is False:
+            _say(f"Galaxy reports {label} as already finished.")
+        else:
+            _say(f"Galaxy accepted the cancel for {label}.")
     return cancelled
 
 

@@ -32,12 +32,14 @@ class _FakeJobs:
     def __init__(self, jobs: list[dict]) -> None:
         self._jobs = jobs
         self.cancelled: list[str] = []
+        self.already_finished: set[str] = set()
 
     def get_jobs(self, history_id=None):
         return self._jobs
 
-    def cancel_job(self, job_id: str) -> None:
+    def cancel_job(self, job_id: str) -> bool:
         self.cancelled.append(job_id)
+        return job_id not in self.already_finished
 
 
 class _FakeHistories:
@@ -101,6 +103,23 @@ def test_cancel_active_jobs_only_cancels_stale_running_jobs() -> None:
     cancelled = cleanup.cancel_active_jobs(gi, "h1", 60)
     assert cancelled == 1
     assert gi.jobs.cancelled == ["old"]
+
+
+def test_cancel_active_jobs_logs_each_job_state_and_outcome(capsys) -> None:
+    gi = _FakeGi(
+        jobs=[
+            {"id": "live", "state": "running", "create_time": _iso(180)},
+            {"id": "gone", "state": "deleting", "create_time": _iso(180)},
+        ]
+    )
+    gi.jobs.already_finished = {"gone"}
+
+    assert cleanup.cancel_active_jobs(gi, "h1", 60) == 2
+
+    out = capsys.readouterr().out
+    assert "Galaxy accepted the cancel for job live (state running, created" in out
+    assert "Galaxy reports job gone (state deleting, created" in out
+    assert "as already finished." in out
 
 
 def test_purge_datasets_skips_already_purged() -> None:

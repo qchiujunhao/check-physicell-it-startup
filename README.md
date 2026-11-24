@@ -186,7 +186,9 @@ proxy answers HTTP 429 (rate limited) or after a time budget of 7 minutes, so
 the job ends with a summary instead of being killed at its 10-minute limit.
 Datasets it did not get to are reported and left for the next run, which skips
 everything already purged. A run fails only if there was a backlog and nothing
-at all could be purged.
+at all could be purged. For every stale job it logs the state Galaxy reported
+and whether the cancel was accepted, so a job that keeps coming back can be told
+apart from one that is merely slow to shut down.
 
 ### Slack notifications
 
