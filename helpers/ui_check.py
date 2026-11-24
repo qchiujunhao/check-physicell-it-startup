@@ -8,7 +8,9 @@ genuine failures when it is not:
 
 * a proxy/gateway error page (backend not up behind the proxy),
 * an unauthenticated bounce to the Galaxy login page (session not accepted),
-* a UI that never renders within the window.
+* a UI that never renders within the window,
+* a Galaxy login page that never loads, even after retrying (Galaxy web
+  frontend slow or unreachable -- not a credential problem).
 
 Login success is confirmed programmatically via ``/api/users/current`` rather
 than by scraping the login markup, so it does not depend on brittle
@@ -23,10 +25,11 @@ HTML so the run can be inspected.
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 
+from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, sync_playwright
 
 from helpers.entry_point import _PROXY_ERROR_STRINGS, InteractiveToolProxyError
 
@@ -35,8 +38,23 @@ class GalaxyLoginError(RuntimeError):
     """Raised when a Galaxy browser session could not be established."""
 
 
+class GalaxyPageLoadError(RuntimeError):
+    """Raised when the Galaxy login page never loaded in the browser.
+
+    This is a reachability problem (a slow or stalled Galaxy web frontend), not
+    a credential problem: no username or password was submitted.
+    """
+
+
 class ToolUINotReady(RuntimeError):
     """Raised when the tool UI never rendered within the window."""
+
+
+# A single stalled request must not fail the whole run: the login page normally
+# loads in a few seconds, so a load that hits the timeout is retried in a fresh
+# browser context (which also gets fresh connections to Galaxy).
+_LOGIN_PAGE_ATTEMPTS = 3
+_LOGIN_PAGE_RETRY_PAUSE_SECONDS = 2.0
 
 
 # Sample every Nth pixel (stride in RGBA bytes) when checking for a painted
@@ -103,6 +121,38 @@ def _body_text(page: Page) -> str:
         return ""
 
 
+def _first_line(exc: Exception) -> str:
+    """The headline of a Playwright error, without its multi-line call log."""
+    lines = str(exc).strip().splitlines()
+    return lines[0] if lines else type(exc).__name__
+
+
+def _stop_loading(page: Page) -> bool:
+    """Abort any in-flight navigation. Return ``True`` if it was stopped.
+
+    A navigation that never received a response leaves the page in a state
+    where ``page.content()`` -- which takes no timeout -- blocks until the
+    connection finally dies, and ``page.screenshot()`` runs into its timeout.
+    Stopping the load first makes both return immediately.
+    """
+    try:
+        session = page.context.new_cdp_session(page)
+        try:
+            session.send("Page.stopLoading")
+        finally:
+            session.detach()
+    except PlaywrightError:
+        return False
+    return True
+
+
+def _close_quietly(context: BrowserContext) -> None:
+    try:
+        context.close()
+    except PlaywrightError:
+        pass
+
+
 def _confirm_authenticated(page: Page, base_url: str, timeout_ms: int) -> None:
     api_url = f"{base_url.rstrip('/')}/api/users/current"
     deadline = time.time() + timeout_ms / 1000
@@ -122,6 +172,51 @@ def _confirm_authenticated(page: Page, base_url: str, timeout_ms: int) -> None:
     raise GalaxyLoginError(f"Galaxy login did not establish a session: {last}")
 
 
+def _open_login_page(
+    browser: Browser,
+    base_url: str,
+    timeout_ms: int,
+    run_dir: Path,
+    attempts: int = _LOGIN_PAGE_ATTEMPTS,
+    retry_pause: float = _LOGIN_PAGE_RETRY_PAUSE_SECONDS,
+    log: Callable[[str], None] = print,
+) -> tuple[BrowserContext, Page]:
+    """Open the Galaxy login page, retrying a load that stalls or errors.
+
+    Each attempt uses a fresh browser context so a retry never reuses a stuck
+    connection. Returns the context and page of the attempt that loaded; the
+    caller owns (and must close) that context.
+
+    Raises:
+        GalaxyPageLoadError: The login page did not load in any attempt.
+    """
+    login_url = f"{base_url.rstrip('/')}/login"
+    attempts = max(1, attempts)
+    for attempt in range(1, attempts + 1):
+        context = browser.new_context(ignore_https_errors=True)
+        page = context.new_page()
+        try:
+            page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            return context, page
+        except PlaywrightError as exc:
+            reason = _first_line(exc)
+            final = attempt == attempts
+            if final:
+                _save_artifacts(page, run_dir, "failure")
+            _close_quietly(context)
+            if final:
+                raise GalaxyPageLoadError(
+                    f"Galaxy login page did not load in {attempts} attempt(s) "
+                    f"of {timeout_ms / 1000:.0f}s each: {reason}"
+                ) from exc
+            log(
+                f"[ui] login page load attempt {attempt}/{attempts} failed "
+                f"({reason}); retrying"
+            )
+            time.sleep(retry_pause)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _login(
     page: Page,
     base_url: str,
@@ -129,9 +224,7 @@ def _login(
     password: str,
     timeout_ms: int,
 ) -> None:
-    login_url = f"{base_url.rstrip('/')}/login"
-    page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
-
+    """Submit the login form on an already-loaded Galaxy login page."""
     password_input = page.locator("input[type='password']").first
     try:
         password_input.wait_for(state="visible", timeout=timeout_ms)
@@ -172,7 +265,15 @@ def _login(
 
 
 def _wait_for_rendered_ui(page: Page, tool_url: str, timeout_ms: int) -> None:
-    page.goto(tool_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    try:
+        page.goto(tool_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    except PlaywrightError as exc:
+        # Raised as ToolUINotReady so the caller redacts the entry point URL
+        # and the failure is reported as the UI not coming up.
+        raise ToolUINotReady(
+            f"Interactive tool page did not load within {timeout_ms / 1000:.0f}s: "
+            f"{_first_line(exc)}"
+        ) from exc
     deadline = time.time() + timeout_ms / 1000
 
     while True:
@@ -204,6 +305,9 @@ def _wait_for_rendered_ui(page: Page, tool_url: str, timeout_ms: int) -> None:
 
 
 def _save_artifacts(page: Page, run_dir: Path, prefix: str) -> None:
+    # On failure the page may still be mid-navigation; stop it first so the
+    # capture below cannot block on a request that will never complete.
+    loading_stopped = _stop_loading(page) if prefix == "failure" else True
     try:
         page.screenshot(
             path=str(run_dir / f"{prefix}.png"),
@@ -213,10 +317,12 @@ def _save_artifacts(page: Page, run_dir: Path, prefix: str) -> None:
     except PlaywrightError:
         pass
     if prefix == "failure":
-        try:
-            (run_dir / "page.html").write_text(page.content())
-        except PlaywrightError:
-            pass
+        # page.content() has no timeout, so only call it once the load stopped.
+        if loading_stopped:
+            try:
+                (run_dir / "page.html").write_text(page.content())
+            except PlaywrightError:
+                pass
         try:
             (run_dir / "ui_state.json").write_text(
                 json.dumps({"url": page.url}, indent=2)
@@ -233,10 +339,14 @@ def verify_tool_ui(
     run_dir: Path,
     ui_timeout: int = 60,
     login_timeout: int = 30,
+    login_page_attempts: int = _LOGIN_PAGE_ATTEMPTS,
+    log: Callable[[str], None] = print,
 ) -> None:
     """Log into Galaxy and confirm the tool UI actually renders.
 
     Raises:
+        GalaxyPageLoadError: The Galaxy login page did not load, even after
+            ``login_page_attempts`` tries of ``login_timeout`` seconds each.
         GalaxyLoginError: The Galaxy session could not be established or was not
             accepted by the interactive-tool proxy.
         InteractiveToolProxyError: The entry point served a proxy/gateway error.
@@ -244,15 +354,26 @@ def verify_tool_ui(
     """
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        context = browser.new_context(ignore_https_errors=True)
-        page = context.new_page()
+        context = None
         try:
-            _login(page, base_url, username, password, login_timeout * 1000)
-            _wait_for_rendered_ui(page, tool_url, ui_timeout * 1000)
-            _save_artifacts(page, run_dir, "connected")
-        except Exception:
-            _save_artifacts(page, run_dir, "failure")
-            raise
+            # Captures failure artifacts from its own final attempt, so it
+            # stays outside the handler below.
+            context, page = _open_login_page(
+                browser,
+                base_url,
+                login_timeout * 1000,
+                run_dir,
+                attempts=login_page_attempts,
+                log=log,
+            )
+            try:
+                _login(page, base_url, username, password, login_timeout * 1000)
+                _wait_for_rendered_ui(page, tool_url, ui_timeout * 1000)
+                _save_artifacts(page, run_dir, "connected")
+            except Exception:
+                _save_artifacts(page, run_dir, "failure")
+                raise
         finally:
-            context.close()
+            if context is not None:
+                _close_quietly(context)
             browser.close()

@@ -104,7 +104,11 @@ def determine_failure_stage(exc: Exception) -> str:
         ToolStartupFailed,
         ToolStartupTimeout,
     )
-    from helpers.ui_check import GalaxyLoginError, ToolUINotReady
+    from helpers.ui_check import (
+        GalaxyLoginError,
+        GalaxyPageLoadError,
+        ToolUINotReady,
+    )
 
     # Custom exception types
     if isinstance(exc, ToolNotAvailable):
@@ -115,6 +119,9 @@ def determine_failure_stage(exc: Exception) -> str:
         return "job_error"
     if isinstance(exc, (EntryPointTimeout, InteractiveToolProxyError)):
         return "entry_point"
+    if isinstance(exc, GalaxyPageLoadError):
+        # The login page never loaded, so no credentials were ever submitted.
+        return "galaxy_unreachable"
     if isinstance(exc, GalaxyLoginError):
         return "authentication"
     if isinstance(exc, ToolUINotReady):

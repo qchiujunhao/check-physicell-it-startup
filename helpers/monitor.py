@@ -36,7 +36,12 @@ from helpers.results import (
     get_run_dir,
     write_result,
 )
-from helpers.ui_check import GalaxyLoginError, ToolUINotReady, verify_tool_ui
+from helpers.ui_check import (
+    GalaxyLoginError,
+    GalaxyPageLoadError,
+    ToolUINotReady,
+    verify_tool_ui,
+)
 
 
 def seconds_remaining(deadline: float) -> int:
@@ -186,10 +191,16 @@ def run_physicell_monitor(
                     run_dir,
                     ui_timeout=UI_VERIFY_TIMEOUT_SECONDS,
                     login_timeout=GALAXY_LOGIN_TIMEOUT_SECONDS,
+                    log=log,
                 ),
             )
             ui_verified = True
-        except (InteractiveToolProxyError, GalaxyLoginError, ToolUINotReady) as exc:
+        except (
+            InteractiveToolProxyError,
+            GalaxyLoginError,
+            GalaxyPageLoadError,
+            ToolUINotReady,
+        ) as exc:
             ui_verified = False
             message = _redact_message(str(exc), [tool_url])
             if REQUIRE_UI_VERIFICATION:

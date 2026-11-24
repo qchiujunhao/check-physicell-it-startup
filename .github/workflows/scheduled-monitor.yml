@@ -38,6 +38,9 @@ jobs:
       - name: Run PhysiCell startup monitor
         run: check-physicell-startup
         env:
+          # Flush each log line as it is printed so the step's timestamps show
+          # where the time actually went.
+          PYTHONUNBUFFERED: "1"
           GALAXY_BASE_URL: ${{ secrets.GALAXY_BASE_URL }}
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
           GALAXY_USERNAME: ${{ secrets.GALAXY_USERNAME }}

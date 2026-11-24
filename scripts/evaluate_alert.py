@@ -24,7 +24,9 @@ def env_int(name: str, default: int, minimum: int = 0) -> int:
 
 
 def env_csv(name: str, default: str) -> set[str]:
-    value = os.getenv(name, default)
+    # An unset GitHub Actions variable arrives as an empty string rather than
+    # being absent, so empty must fall back to the default just like env_int.
+    value = os.getenv(name, "").strip() or default
     return {item.strip() for item in value.split(",") if item.strip()}
 
 

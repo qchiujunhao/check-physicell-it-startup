@@ -49,6 +49,11 @@ proxy/gateway error (`entry_point`), an unauthenticated bounce to the login page
 (`authentication`), or a UI that never renders (`ui_verification`). Set
 `REQUIRE_UI_VERIFICATION=false` to treat UI verification as diagnostic only.
 
+A Galaxy login page that fails to load is retried (3 attempts, each in a fresh
+browser context) so a single stalled request does not fail the run. If it never
+loads, the run fails at `galaxy_unreachable`, not `authentication`: no
+credentials were submitted.
+
 > The Galaxy login markup and the tool's readiness signal can vary by version.
 > Login success is confirmed via `/api/users/current` and readiness by sampling
 > canvas pixels, and every run saves a screenshot and page HTML, so the first
@@ -266,7 +271,8 @@ Example `result.json`:
 
 ## Failure Stages
 
-- `galaxy_unreachable`: Galaxy could not be reached or resolved.
+- `galaxy_unreachable`: Galaxy could not be reached or resolved, or its login
+  page never loaded in the browser.
 - `authentication`: credentials are missing, invalid, or unauthorized.
 - `tool_not_available`: the configured PhysiCell tool ID is not installed or enabled.
 - `history`: creating or reusing the Galaxy history failed.
