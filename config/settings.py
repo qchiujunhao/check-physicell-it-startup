@@ -83,6 +83,12 @@ STARTUP_EXPECTED_SECONDS = env_int("STARTUP_EXPECTED_SECONDS", 120, minimum=1)
 REQUIRE_UI_VERIFICATION = env_bool("REQUIRE_UI_VERIFICATION", True)
 UI_VERIFY_TIMEOUT_SECONDS = env_int("UI_VERIFY_TIMEOUT_SECONDS", 60, minimum=1)
 GALAXY_LOGIN_TIMEOUT_SECONDS = env_int("GALAXY_LOGIN_TIMEOUT_SECONDS", 30, minimum=1)
+# How long the entry point may keep answering with a proxy/gateway error (or
+# not at all) before the run fails. It normally serves within ten seconds of
+# being registered; the wait is taken out of STARTUP_TIMEOUT_SECONDS.
+ENTRY_POINT_VERIFY_TIMEOUT_SECONDS = env_int(
+    "ENTRY_POINT_VERIFY_TIMEOUT_SECONDS", 180, minimum=1
+)
 PURGE_REUSED_HISTORY = env_bool("PURGE_REUSED_HISTORY", False)
 HISTORY_NAME = env_or_default("HISTORY_NAME", "PhysiCell Monitor")
 OUTPUT_DIR = Path(env_or_default("OUTPUT_DIR", "output"))

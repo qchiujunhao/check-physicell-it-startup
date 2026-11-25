@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.settings import (
+    ENTRY_POINT_VERIFY_TIMEOUT_SECONDS,
     GALAXY_BASE_URL,
     GALAXY_LOGIN_TIMEOUT_SECONDS,
     GALAXY_PASSWORD,
@@ -46,6 +47,23 @@ from helpers.ui_check import (
 
 def seconds_remaining(deadline: float) -> int:
     return max(1, math.ceil(deadline - time.time()))
+
+
+# The entry point check always gets at least this long, however much of the
+# startup budget the job itself used.
+_MIN_ENTRY_POINT_WINDOW_SECONDS = 30
+
+
+def entry_point_window(deadline: float) -> int:
+    """Seconds to keep probing the entry point before calling it broken.
+
+    The wait comes out of the startup budget, so a job that was slow to start
+    cannot also spend the whole window here and run into the CI job's limit.
+    """
+    return min(
+        ENTRY_POINT_VERIFY_TIMEOUT_SECONDS,
+        max(_MIN_ENTRY_POINT_WINDOW_SECONDS, seconds_remaining(deadline)),
+    )
 
 
 def _time_stage(
@@ -164,7 +182,11 @@ def run_physicell_monitor(
                 "entry_point_verification",
                 timings,
                 log,
-                lambda: verify_entry_point(tool_url, timeout=30),
+                lambda: verify_entry_point(
+                    tool_url,
+                    timeout=entry_point_window(deadline),
+                    log=log,
+                ),
             )
         except InteractiveToolProxyError as exc:
             raise InteractiveToolProxyError(

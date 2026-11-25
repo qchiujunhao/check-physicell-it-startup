@@ -33,8 +33,9 @@ to launch exactly the version in `PHYSICELL_TOOL_ID`.
 5. Launch the interactive tool.
 6. Wait for the Galaxy job to reach `running`.
 7. Wait for the interactive tool entry point URL.
-8. HTTP gate: fetch the entry point unauthenticated and fail fast on a proxy or
-   gateway error, or no response at all.
+8. HTTP gate: fetch the entry point unauthenticated until it serves, and fail
+   if a proxy or gateway error, or no response at all, lasts for
+   `ENTRY_POINT_VERIFY_TIMEOUT_SECONDS`.
 9. UI verification: log into Galaxy in a headless browser, open the entry point,
    and wait until the noVNC session paints a frame (the canvas has non-uniform
    pixels).
@@ -61,6 +62,15 @@ monitor waits for the job and its entry point, a poll that goes unanswered or
 comes back as a gateway error is not held against the tool: polling carries on
 until `STARTUP_TIMEOUT_SECONDS`. If the API is still not answering by then, the
 run fails at `galaxy_unreachable`.
+
+A newly registered entry point usually answers with a gateway error for a few
+seconds while the tool comes up behind the proxy. The monitor keeps probing it
+for up to `ENTRY_POINT_VERIFY_TIMEOUT_SECONDS` and fails at `entry_point` only
+if the error lasts that long. The wait comes out of `STARTUP_TIMEOUT_SECONDS`,
+so a job that was slow to start gets less of it, but never under 30 seconds.
+Each probe is logged with its status code, `Server` header and error-page title
+(never the URL), which shows how long the entry point was unreachable and which
+server was answering.
 
 > The Galaxy login markup and the tool's readiness signal can vary by version.
 > Login success is confirmed via `/api/users/current` and readiness by sampling
@@ -134,6 +144,7 @@ production checks.
 | `STARTUP_TIMEOUT_SECONDS` | No | `600` | Maximum time allowed for job startup and entry point availability. |
 | `STARTUP_EXPECTED_SECONDS` | No | `120` | Startup time threshold. Runs slower than this are labeled `slow` in the result but do not fail the monitor command. |
 | `REQUIRE_UI_VERIFICATION` | No | `true` | Whether a UI verification failure should fail the monitor run. Set `false` to treat it as diagnostic only. |
+| `ENTRY_POINT_VERIFY_TIMEOUT_SECONDS` | No | `180` | How long the entry point may keep returning a proxy/gateway error, or not respond, before the run fails at `entry_point`. Taken out of `STARTUP_TIMEOUT_SECONDS`. |
 | `UI_VERIFY_TIMEOUT_SECONDS` | No | `60` | Max seconds to wait for the tool UI to render a frame. |
 | `GALAXY_LOGIN_TIMEOUT_SECONDS` | No | `30` | Max seconds to establish the browser login session. |
 | `GALAXY_API_TIMEOUT_SECONDS` | No | `60` | Longest wait for any single Galaxy API request, for both the monitor and the cleanup. |
